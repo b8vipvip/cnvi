@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 自动生成短视频工具</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>AI 自动生成短视频工具</h1>
+    <section><h2>A. 文案区域</h2>
+      <textarea id="scriptText" placeholder="请粘贴你的商品文案/短视频文案"></textarea>
+      <div>字数：<span id="charCount">0</span></div>
+      <input id="hashtags" placeholder="#脑力训练 #儿童读物 #早教绘本" />
+    </section>
+    <section><h2>B. 商品图片区域</h2>
+      <input id="images" type="file" accept="image/*" multiple />
+      <div>图片数量：<span id="imgCount">0</span>（建议 3-8 张）</div>
+      <div id="previews" class="previews"></div>
+      <select id="imageStrategy"><option value="ai_fill">优先上传，不够时 AI 补图</option><option value="uploaded_only">只使用上传图片</option><option value="ai_only">全部使用 AI 图</option></select>
+    </section>
+    <section><h2>C. 视频参数</h2>
+      <select id="orientation"><option value="portrait">竖屏 1080x1920</option><option value="landscape">横屏 1920x1080</option></select>
+      <select id="durationMode"><option value="auto">自动</option><option value="15">15 秒</option><option value="30">30 秒</option><option value="45">45 秒</option><option value="60" selected>60 秒</option><option value="custom">自定义</option></select>
+      <input id="customDuration" type="number" min="5" max="300" value="60" />
+      <select id="videoStyle"><option>宝妈种草</option><option>知识科普</option><option>亲子温暖</option><option>商品测评</option><option>直播切片风格</option><option selected>NotebookLM 音频概览风格</option></select>
+      <select id="subtitleMode"><option value="both" selected>大字幕 + 底部字幕</option><option value="bottom">只要底部字幕</option><option value="big">只要大字幕</option><option value="none">不要字幕</option></select>
+      <label><input id="showSpeakerName" type="checkbox" checked /> 字幕显示说话人</label>
+    </section>
+    <section><h2>D. 配音区域</h2>
+      <select id="narrationMode"><option value="monologue">单人口播</option><option value="dialogue2" selected>双人对话</option><option value="dialogue3">三人对话</option><option value="dialogue4">四人对话</option></select>
+      <select id="dialogueStyle"><option selected>NotebookLM 音频概览</option><option>轻松聊天</option><option>宝妈真实分享</option><option>专家解释 + 家长提问</option><option>主持人 A + 主持人 B 种草</option><option>情景亲子对话</option></select>
+      <select id="emotionLevel"><option>平稳</option><option>自然</option><option selected>有感染力</option><option>活泼</option><option>温柔</option></select>
+      <select id="speechSpeed"><option>慢</option><option selected>正常</option><option>稍快</option></select>
+      <div id="speakerConfigs"></div>
+    </section>
+    <section><h2>E. API 配置</h2>
+      <select id="apiProvider"><option value="openai" selected>OpenAI</option><option value="edge_tts">Edge TTS 免费模式</option><option value="mixed">混合模式</option></select>
+      <input id="openaiApiKey" type="password" placeholder="OpenAI API Key" />
+      <label><input id="saveLocal" type="checkbox" /> 仅保存在本机浏览器</label>
+      <input id="openaiBaseUrl" value="https://api.openai.com/v1" />
+      <input id="scriptModel" value="gpt-5.5" />
+      <input id="ttsModel" value="gpt-4o-mini-tts" />
+      <input id="imageModel" value="gpt-image-2" />
+      <select id="imageQuality"><option>low</option><option selected>medium</option><option>high</option></select>
+      <label><input id="enableAiImage" type="checkbox" checked /> 启用 AI 生成图片</label>
+    </section>
+    <section><h2>F. 操作</h2>
+      <button id="previewBtn">预览参数</button>
+      <button id="generateBtn">生成视频</button>
+      <pre id="preview"></pre>
+      <div id="taskStatus"></div>
+      <div id="videoWrap"></div>
+    </section>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
