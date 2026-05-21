@@ -17,11 +17,11 @@ python app.py
 6. 安装 requirements
 7. 创建 `.env`
 8. 使用 gunicorn 启动
-9. 宝塔网站反向代理到 `127.0.0.1:5000`
+9. 宝塔网站反向代理到 `127.0.0.1:5028`
 
 ### Gunicorn 启动命令
 ```bash
-gunicorn -w 1 -b 127.0.0.1:5000 wsgi:app
+gunicorn -w 1 -b 127.0.0.1:5028 wsgi:app
 ```
 > 当前任务状态保存在内存字典，生产请先使用 `-w 1`。
 
@@ -34,7 +34,7 @@ server {
     client_max_body_size 300M;
 
     location / {
-        proxy_pass http://127.0.0.1:5000;
+        proxy_pass http://127.0.0.1:5028;
         proxy_http_version 1.1;
 
         proxy_set_header Host $host;
@@ -59,7 +59,7 @@ After=network.target
 User=root
 WorkingDirectory=/www/wwwroot/auto_video_web
 EnvironmentFile=/www/wwwroot/auto_video_web/.env
-ExecStart=/www/wwwroot/auto_video_web/venv/bin/gunicorn -w 1 -b 127.0.0.1:5000 wsgi:app
+ExecStart=/www/wwwroot/auto_video_web/venv/bin/gunicorn -w 1 -b 127.0.0.1:5028 wsgi:app
 Restart=always
 RestartSec=3
 
