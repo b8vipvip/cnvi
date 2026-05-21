@@ -1,0 +1,11 @@
+body { font-family: Arial, "Microsoft YaHei", sans-serif; background:#f4f6f8; margin:0; }
+.container{ max-width:980px; margin:20px auto; background:#fff; padding:20px; border-radius:12px; }
+section{ border:1px solid #ddd; border-radius:10px; padding:12px; margin-bottom:14px; }
+textarea{ width:100%; min-height:140px; }
+input, select, textarea, button { margin:6px 0; padding:8px; width:100%; box-sizing:border-box; }
+button{ cursor:pointer; background:#1769ff; color:#fff; border:0; border-radius:8px; }
+.previews{ display:flex; flex-wrap:wrap; gap:8px; }
+.previews img{ width:90px; height:90px; object-fit:cover; border-radius:6px; border:1px solid #ccc; }
+.role-card{ border:1px dashed #bbb; padding:10px; margin:8px 0; border-radius:8px; }
+video{ max-width:100%; margin-top:10px; }
+pre{ background:#0d1117; color:#c9d1d9; padding:10px; overflow:auto; border-radius:8px; }
