@@ -1,79 +1,129 @@
-# AI 自动生成短视频工具（MVP）
+# AI 自动生成短视频工具
 
-## 1. 项目介绍
-本项目是一个本地 Web 工具：输入商品文案 + 上传商品图，即可自动生成“多人对话配音 + 字幕 + 短视频 MP4”。
-
-## 2. 功能列表
-- AI 改写文案为结构化分镜 JSON
-- 单人/双人/三人/四人对话
-- 每个 speaker 使用不同 voice
-- OpenAI TTS（gpt-4o-mini-tts）+ edge-tts 备用
-- OpenAI 图片生成（gpt-image-2）
-- 字幕输出 SRT + ASS
-- FFmpeg 合成 scene + 拼接 + 字幕烧录
-- 任务状态轮询（内存字典）
-
-## 3. 环境要求
-- Python 3.8+
-- FFmpeg（需要 ffmpeg + ffprobe）
-- OpenAI API Key（可选但推荐）
-
-## 4. 安装依赖
+## 本地运行
 ```bash
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-```
-
-## 5. Windows 安装 FFmpeg
-```bash
-winget install Gyan.FFmpeg
-```
-
-## 6. 启动
-```bash
 python app.py
 ```
 
-## 7. 浏览器访问
-http://127.0.0.1:5000
+## 宝塔面板部署（Nginx + Gunicorn + Flask）
+1. 安装 Python 3
+2. 安装 Git
+3. 安装 FFmpeg
+4. 拉取 GitHub 仓库
+5. 创建虚拟环境
+6. 安装 requirements
+7. 创建 `.env`
+8. 使用 gunicorn 启动
+9. 宝塔网站反向代理到 `127.0.0.1:5028`
 
-## 8. API Key 使用说明
-- 可直接在前端输入 Key（仅本次任务使用）
-- 也可在 `.env` 设置：`OPENAI_API_KEY=...`
-- 生产环境建议使用环境变量，不建议写死在前端
-
-## 9. 使用流程
-1. 粘贴文案
-2. 上传商品图片
-3. 选择单人/双人/三人/四人
-4. 配置声音与 API
-5. 点击生成视频，等待任务完成
-
-## 10. 常见问题
-1. **ffmpeg 找不到**：请确认 ffmpeg/ffprobe 已加入 PATH。
-2. **OpenAI API Key 错误**：检查 key 是否有效，base_url 是否正确。
-3. **gpt-image-2 生成失败**：会自动 fallback 到上传图片（如存在）。
-4. **TTS 配音失败**：可切到 edge-tts 或检查网络/API。
-5. **中文字体乱码**：安装微软雅黑/黑体或 Noto CJK/WQY 字体。
-6. **视频时长偏差**：最终以真实配音时长为准。
-7. **商品图被裁剪**：当前为 cover 裁剪以适配 9:16 或 16:9。
-
-## 11. 目录结构
-```text
-auto_video_web/
-├─ app.py
-├─ config.py
-├─ requirements.txt
-├─ README.md
-├─ static/
-│  ├─ index.html
-│  ├─ style.css
-│  └─ app.js
-├─ uploads/
-├─ output/
-│  ├─ audio/
-│  ├─ images/
-│  ├─ videos/
-│  ├─ subtitles/
-│  └─ final/
-└─ temp/
+### Gunicorn 启动命令
+```bash
+gunicorn -w 1 -b 127.0.0.1:5028 wsgi:app
 ```
+> 当前任务状态保存在内存字典，生产请先使用 `-w 1`。
+
+## Nginx 反向代理配置示例
+```nginx
+server {
+    listen 80;
+    server_name video.example.com;
+
+    client_max_body_size 300M;
+
+    location / {
+        proxy_pass http://127.0.0.1:5028;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 600;
+        proxy_send_timeout 600;
+        proxy_read_timeout 600;
+    }
+}
+```
+
+## systemd 服务示例
+```ini
+[Unit]
+Description=Auto Video Web
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/www/wwwroot/auto_video_web
+EnvironmentFile=/www/wwwroot/auto_video_web/.env
+ExecStart=/www/wwwroot/auto_video_web/venv/bin/gunicorn -w 1 -b 127.0.0.1:5028 wsgi:app
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## .env 示例
+参考 `.env.example`，关键项：
+- OPENAI_API_KEY
+- OPENAI_BASE_URL
+- OPENAI_SCRIPT_MODEL（可留空）
+- OPENAI_TTS_MODEL
+- OPENAI_IMAGE_MODEL
+- FLASK_SECRET_KEY
+- MAX_UPLOAD_MB
+
+## 常见问题
+- `ffmpeg: command not found`
+- `git clone` 失败
+- OpenAI API 连接失败
+- 上传图片 `413 Request Entity Too Large`
+- 生成视频很慢
+- 任务状态一直 `running`
+- 中文字体乱码
+
+## 三类模型单独配置
+- 文案模型：用于生成分镜和多角色对话结构。
+- TTS 模型：用于生成每个角色的配音音频。
+- 图片模型：用于生成 AI 氛围图（可与上传图片混合）。
+
+## 声音试听说明
+- 前端角色卡片支持“试听声音”，会调用 `/api/tts-preview`。
+- 使用 OpenAI TTS 时会产生少量 API 费用。
+- 使用 Edge TTS 免费模式时，不需要 OpenAI Key。
+
+## API Key 优先级
+- 当前任务前端填写的模块 Key（script/tts/image）优先。
+- 若模块 Key 为空，回退到通用 Key 与 `.env` 的 `OPENAI_API_KEY`。
+- 若该模块需要 OpenAI 且仍未提供，则接口直接报错。
+
+## MySQL 5.7（宝塔）部署
+1. 在宝塔创建数据库：
+   - 数据库名：`auto_video_db`
+   - 用户名：`auto_video`
+   - 密码：自定义
+2. 在 `.env` 增加：
+```env
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=auto_video
+MYSQL_PASSWORD=你的密码
+MYSQL_DATABASE=auto_video_db
+MYSQL_CHARSET=utf8mb4
+```
+3. 初始化数据库：
+```bash
+source venv/bin/activate
+python init_db.py
+```
+4. 重启服务：
+```bash
+systemctl restart auto-video
+```
+5. 访问：
+- `https://你的域名/`
+- `https://你的域名/records`
