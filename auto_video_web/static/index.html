@@ -13,6 +13,7 @@
     <section><h2>B. 商品图片区域</h2><input id="images" type="file" accept="image/*" multiple /><div>图片数量：<span id="imgCount">0</span></div><div id="previews" class="previews"></div></section>
     <section><h2>C. 视频参数</h2><div class="grid3"><select id="orientation"><option value="portrait">竖屏 1080x1920</option><option value="landscape">横屏 1920x1080</option></select><select id="durationMode"><option value="auto">自动</option><option value="15">15 秒</option><option value="30">30 秒</option><option value="45">45 秒</option><option value="60" selected>60 秒</option><option value="custom">自定义</option></select><input id="customDuration" type="number" min="5" max="300" value="60" /></div><select id="videoStyle"><option selected>NotebookLM 音频概览风格</option><option>知识科普</option></select><select id="subtitleMode"><option value="both" selected>大字幕 + 底部字幕</option><option value="bottom">只要底部字幕</option><option value="big">只要大字幕</option><option value="none">不要字幕</option></select><label><input id="showSpeakerName" type="checkbox" checked /> 字幕显示说话人</label></section>
     <section><h2>D. 配音区域</h2><div class="grid2"><select id="narrationMode"><option value="monologue">单人口播</option><option value="dialogue2" selected>双人对话</option><option value="dialogue3">三人对话</option><option value="dialogue4">四人对话</option></select><select id="dialogueStyle"><option selected>NotebookLM 音频概览</option><option>轻松聊天</option></select></div><div id="speakerConfigs" class="speaker-grid"></div></section>
+    <section><h2>D2. 对话停顿设置</h2><p>适当停顿可以让多人对话更自然。建议每句话 200-500ms，场景间 500-1000ms。</p><div class="grid2"><label>每句话间隔时间（毫秒）<input id="dialoguePauseMs" type="number" min="0" max="2000" step="100" value="300" /></label><label>每个场景间隔时间（毫秒）<input id="scenePauseMs" type="number" min="0" max="3000" step="100" value="500" /></label></div></section>
 
     <section><h2>E. API 配置</h2>
       <p>推荐生产环境使用服务器 .env 的 OPENAI_API_KEY。前端 Key 仅用于当前任务，只有勾选时才保存到 localStorage。</p>
@@ -20,27 +21,27 @@
       <div class="api-cards">
         <div class="card"><h3>文案 / 分镜模型</h3>
           <label>API 提供商<select id="scriptProvider"><option value="openai">OpenAI</option><option value="openai_compatible">自定义 OpenAI 兼容接口</option></select></label>
-          <label>OpenAI API Key<input id="scriptApiKey" type="password" placeholder="可留空，优先使用服务器 .env 中的 OPENAI_API_KEY" /></label>
-          <label>Base URL<input id="scriptBaseUrl" value="https://api.openai.com/v1" placeholder="OpenAI 或兼容接口地址" /></label>
-          <label>文案模型<input id="scriptModel" placeholder="默认读取后端配置，没有则 gpt-5.5" /></label>
+          <label>OpenAI API Key<input id="scriptApiKey" type="password" placeholder="可留空，默认使用服务器 .env 中的 OPENAI_API_KEY" /></label>
+          <label>Base URL<input id="scriptBaseUrl" value="" placeholder="可留空，默认使用服务器 OPENAI_BASE_URL" /></label>
+          <label>文案模型<input id="scriptModel" placeholder="可留空，默认使用服务器 OPENAI_SCRIPT_MODEL" /></label>
           <small>用于把原始文案改写成分镜、多角色对话、字幕结构</small>
           <label>temperature<input id="scriptTemperature" type="number" min="0" max="1.5" step="0.1" value="0.7" /></label>
           <label>最大输出长度<input id="scriptMaxTokens" type="number" value="4000" min="256" /></label>
         </div>
         <div class="card"><h3>TTS 配音模型</h3>
           <label>TTS 提供商<select id="ttsProvider"><option value="openai">OpenAI TTS</option><option value="edge_tts">Edge TTS 免费模式</option></select></label>
-          <label>TTS API Key<input id="ttsApiKey" type="password" placeholder="可留空" /></label>
-          <label>TTS Base URL<input id="ttsBaseUrl" value="https://api.openai.com/v1" placeholder="OpenAI 或兼容接口地址" /></label>
-          <label>TTS 模型<input id="ttsModel" value="gpt-4o-mini-tts" placeholder="例如 gpt-4o-mini-tts" /></label>
+          <label>TTS API Key<input id="ttsApiKey" type="password" placeholder="可留空，OpenAI TTS 默认使用服务器 OPENAI_API_KEY；Edge TTS 不需要 Key" /></label>
+          <label>TTS Base URL<input id="ttsBaseUrl" value="" placeholder="可留空，默认使用服务器 OPENAI_BASE_URL" /></label>
+          <label>TTS 模型<input id="ttsModel" value="" placeholder="可留空，默认使用服务器 OPENAI_TTS_MODEL" /></label>
           <label>默认语速<select id="ttsDefaultSpeed"><option>慢</option><option selected>正常</option><option>稍快</option></select></label>
           <label>默认情绪<select id="ttsDefaultEmotion"><option>平稳</option><option selected>自然</option><option>温柔</option><option>有感染力</option><option>活泼</option></select></label>
           <label><input id="enableSpeakerVoices" type="checkbox" checked /> 启用角色音色</label>
         </div>
         <div class="card"><h3>图片生成模型</h3>
-          <label>图片 API Key<input id="imageApiKey" type="password" placeholder="可留空" /></label>
-          <label>图片 Base URL<input id="imageBaseUrl" value="https://api.openai.com/v1" /></label>
+          <label>图片 API Key<input id="imageApiKey" type="password" placeholder="可留空，默认使用服务器 OPENAI_API_KEY" /></label>
+          <label>图片 Base URL<input id="imageBaseUrl" value="" placeholder="可留空，默认使用服务器 OPENAI_BASE_URL" /></label>
           <label><input id="enableAiImage" type="checkbox" checked /> 启用 AI 生成图片</label>
-          <label>图片模型<input id="imageModel" value="gpt-image-2" /></label>
+          <label>图片模型<input id="imageModel" value="" placeholder="可留空，默认使用服务器 OPENAI_IMAGE_MODEL" /></label>
           <label>图片质量<select id="imageQuality"><option>low</option><option selected>medium</option><option>high</option></select></label>
           <label>图片生成策略<select id="imageStrategy"><option value="uploaded_only">只使用上传图片</option><option value="ai_fill" selected>上传图片不足时 AI 补图</option><option value="ai_only">全部使用 AI 图片</option></select></label>
           <label>图片风格提示词<textarea id="imageStylePrompt">温暖、真实、亲子、自然光、适合短视频带货，不生成错误商品文字，不生成虚假品牌包装</textarea></label>

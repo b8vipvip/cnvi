@@ -110,6 +110,22 @@ edge-tts --version
 - 若模块 Key 为空，回退到通用 Key 与 `.env` 的 `OPENAI_API_KEY`。
 - 若该模块需要 OpenAI 且仍未提供，则接口直接报错。
 
+## NotebookLM 风格与停顿设置
+- 当对话风格选择 NotebookLM / 音频概览时，系统会加入适量语气词、回应、追问和补充，让双人/多人对话更自然。
+- 可通过“对话停顿设置”调节自然程度：
+  - `dialoguePauseMs`：每句话之间的静音停顿，建议 200-500ms。
+  - `scenePauseMs`：每个分镜之间的静音停顿，建议 500-1000ms。
+
+## API 配置留空回退说明
+- 前端 API 配置可留空；留空时默认使用服务器 `.env` / `config.py` 中的配置。
+- 建议在 `.env` 至少配置：
+  - `OPENAI_API_KEY`
+  - `OPENAI_BASE_URL`
+  - `OPENAI_TTS_MODEL`
+  - `OPENAI_IMAGE_MODEL`
+- 文案模型若最终为空（前端和 `.env` 都未提供），接口会提示：
+  - `未配置文案模型，请在前端填写或在 .env 设置 OPENAI_SCRIPT_MODEL。`
+
 ## MySQL 5.7（宝塔）部署
 1. 在宝塔创建数据库：
    - 数据库名：`auto_video_db`
