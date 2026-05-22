@@ -64,6 +64,7 @@ def main():
         conn = get_connection(use_db=True)
         with conn.cursor() as cur:
             cur.execute(CREATE_TABLE_SQL)
+            cur.execute(CREATE_APP_SETTINGS_SQL)
         conn.close()
         print("数据库和表初始化完成")
     except pymysql.MySQLError as e:
@@ -72,3 +73,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+CREATE_APP_SETTINGS_SQL = """
+CREATE TABLE IF NOT EXISTS `app_settings` (
+  `setting_key` VARCHAR(100) NOT NULL,
+  `setting_value` LONGTEXT,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+"""

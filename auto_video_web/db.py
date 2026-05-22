@@ -95,3 +95,26 @@ def delete_video_record(task_id, delete_files=True):
         with conn.cursor() as cur:
             cur.execute("DELETE FROM video_generation_records WHERE task_id=%s", (task_id,))
     return True
+
+
+def get_app_setting(key, default=None):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT setting_value FROM app_settings WHERE setting_key=%s LIMIT 1", (key,))
+            row = cur.fetchone()
+            if not row or row.get("setting_value") is None:
+                return default
+            try:
+                return json.loads(row["setting_value"])
+            except Exception:
+                return row["setting_value"]
+
+
+def set_app_setting(key, value):
+    payload = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO app_settings (setting_key, setting_value) VALUES (%s,%s)
+                ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)
+            """, (key, payload))
