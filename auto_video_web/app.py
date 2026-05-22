@@ -428,7 +428,9 @@ def generate_storyboard_with_ai(params, api_key, base_url):
 2) 角色之间必须有回应、追问、补充、总结，形成自然承接。
 3) 允许适量使用语气词和过渡词：嗯、是的、没错、对、确实、哇、你看、其实、换句话说、我觉得、这里有个重点、这就很有意思了、对这点很关键。
 4) 语气词不要每句都加，避免重复和油腻。
-5) 每句 text 建议 8-28 个中文字符，允许少量 2-8 字短回应。
+5) 每句 text 建议 8-24 个中文字符，最长不要超过 32 个中文字符，允许少量 2-8 字短回应。
+6) 每个 dialogue.text 只写一句短句，不要把多句话塞进一个 text。
+7) 如果同一角色要表达多个意思，必须拆成多个 dialogue item。
 6) 严禁机械 ABAB 轮流；允许同一角色连续 2 句（短句），并包含插话/承接。
 7) 儿童早教合规：禁止“保证变聪明”“开发智商”“治疗专注力”；可表达“帮助锻炼观察力、提升亲子互动、培养阅读兴趣、更愿意观察和表达”。
 8) 建议结构：A 提出观点/引问题 → B 回应补充 → A 承接解释 → B 举例或转下个卖点 → A/B 收束总结。
@@ -521,11 +523,74 @@ def wrap_subtitle_text(text, max_chars_per_line=18, max_lines=2):
         lines[-1] = lines[-1][: max(0, max_chars_per_line - 1)] + "…"
     return "\\N".join(lines)
 
+def split_text_to_subtitle_chunks(text, max_chars_per_line=18, max_lines=2, segmentation_mode="auto", max_chars_per_cue=None):
+    plain = re.sub(r"\s+", "", str(text or ""))
+    if not plain:
+        return []
+    max_chars = max(8, int(max_chars_per_cue or (int(max_chars_per_line) * max(1, int(max_lines)))))
+    mode = (segmentation_mode or "auto").lower()
+    min_merge = 0 if mode == "strict" else int(max_chars * (0.45 if mode == "auto" else 0.7))
+    pieces = [x for x in re.split(r"([。！？!?；;，,])", plain) if x]
+    sentences, i = [], 0
+    while i < len(pieces):
+        seg = pieces[i]
+        if i + 1 < len(pieces) and re.fullmatch(r"[。！？!?；;，,]", pieces[i + 1]):
+            seg += pieces[i + 1]
+            i += 2
+        else:
+            i += 1
+        if len(seg) <= max_chars:
+            sentences.append(seg)
+        else:
+            for j in range(0, len(seg), max_chars):
+                sentences.append(seg[j:j + max_chars])
+    if mode == "strict":
+        return [x for x in sentences if x]
+    merged = []
+    for seg in sentences:
+        if not merged:
+            merged.append(seg)
+            continue
+        if len(merged[-1]) < min_merge and len(merged[-1] + seg) <= max_chars:
+            merged[-1] += seg
+        elif len(seg) < min_merge and len(merged[-1] + seg) <= max_chars:
+            merged[-1] += seg
+        else:
+            merged.append(seg)
+    return [x for x in merged if x]
+
+def normalize_dialogue_for_tts_and_subtitles(storyboard, subtitle_style):
+    style = subtitle_style or {}
+    max_lines = max(1, to_int(style.get("subtitleMaxLines", 2), 2))
+    max_chars_per_line = max(8, to_int(style.get("subtitleMaxCharsPerLine", 18), 18))
+    mode = style.get("subtitleSegmentationMode", "auto")
+    cue_max_chars = max(12, to_int(style.get("subtitleMaxCharsPerCue", max_chars_per_line * max_lines), max_chars_per_line * max_lines))
+    for scene in storyboard.get("scenes", []) or []:
+        items = []
+        for d in scene.get("dialogue", []) or []:
+            sid = d.get("speaker_id") or d.get("speaker") or "S1"
+            sname = d.get("speaker_name") or "主持人"
+            emotion = d.get("emotion", "自然")
+            chunks = split_text_to_subtitle_chunks(d.get("text", ""), max_chars_per_line=max_chars_per_line, max_lines=max_lines, segmentation_mode=mode, max_chars_per_cue=cue_max_chars)
+            if not chunks:
+                continue
+            for c in chunks:
+                items.append({"speaker_id": sid, "speaker_name": sname, "emotion": emotion, "text": c})
+        scene["dialogue"] = items
+    return storyboard
+
+def to_short_speaker_name(name):
+    n = str(name or "").strip()
+    mapping = {"主持人A": "A", "主持人B": "B", "主持人C": "C", "主持人D": "D"}
+    return mapping.get(n, n)
 
 def build_subtitles(items, show_name, srt_path, ass_path, orientation, subtitle_style):
+    speaker_mode = subtitle_style.get("subtitleSpeakerNameMode", "short")
+    use_name = show_name and speaker_mode != "none"
     with open(srt_path, "w", encoding="utf-8") as f:
         for idx, it in enumerate(items, 1):
-            text = f"{it['speaker_name']}：{it['text']}" if show_name else it["text"]
+            speaker_name = it["speaker_name"] if speaker_mode == "full" else to_short_speaker_name(it["speaker_name"])
+            text = f"{speaker_name}：{it['text']}" if use_name else it["text"]
             f.write(f"{idx}\n{srt_time(it['start'])} --> {srt_time(it['end'])}\n{text}\n\n")
 
     play_res_x, play_res_y = (1080, 1920) if orientation == "portrait" else (1920, 1080)
@@ -559,7 +624,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(header)
         for it in items:
-            text = f"{it['speaker_name']}：{it['text']}" if show_name else it["text"]
+            speaker_name = it["speaker_name"] if speaker_mode == "full" else to_short_speaker_name(it["speaker_name"])
+            text = f"{speaker_name}：{it['text']}" if use_name else it["text"]
             text = wrap_subtitle_text(text.replace("\n", ""), max_chars, max_lines)
             f.write(f"Dialogue: 0,{ass_time(it['start'])},{ass_time(it['end'])},Default,,0,0,0,,{text}\n")
 
@@ -568,8 +634,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def clamp_subtitle_style(style, orientation):
     defaults = {
-        "portrait": {"subtitleFontSize": 30, "subtitleMarginBottom": 120, "subtitleMarginX": 70, "subtitleMaxLines": 2, "subtitleMaxCharsPerLine": 18, "subtitleBgOpacity": 45, "subtitleOutline": 2},
-        "landscape": {"subtitleFontSize": 26, "subtitleMarginBottom": 70, "subtitleMarginX": 120, "subtitleMaxLines": 2, "subtitleMaxCharsPerLine": 28, "subtitleBgOpacity": 45, "subtitleOutline": 2},
+        "portrait": {"subtitleFontSize": 30, "subtitleMarginBottom": 120, "subtitleMarginX": 70, "subtitleMaxLines": 2, "subtitleMaxCharsPerLine": 18, "subtitleBgOpacity": 45, "subtitleOutline": 2, "subtitleSegmentationMode": "auto", "subtitleMaxCharsPerCue": 32, "subtitleSpeakerNameMode": "short"},
+        "landscape": {"subtitleFontSize": 26, "subtitleMarginBottom": 70, "subtitleMarginX": 120, "subtitleMaxLines": 2, "subtitleMaxCharsPerLine": 28, "subtitleBgOpacity": 45, "subtitleOutline": 2, "subtitleSegmentationMode": "auto", "subtitleMaxCharsPerCue": 48, "subtitleSpeakerNameMode": "short"},
     }
     base = defaults.get(orientation, defaults["portrait"]).copy()
     style = style or {}
@@ -580,6 +646,9 @@ def clamp_subtitle_style(style, orientation):
     base["subtitleMaxCharsPerLine"] = max(8, min(40, to_int(style.get("subtitleMaxCharsPerLine", base["subtitleMaxCharsPerLine"]), base["subtitleMaxCharsPerLine"])))
     base["subtitleBgOpacity"] = max(0, min(90, to_int(style.get("subtitleBgOpacity", base["subtitleBgOpacity"]), base["subtitleBgOpacity"])))
     base["subtitleOutline"] = max(0.0, min(5.0, float(style.get("subtitleOutline", base["subtitleOutline"]))))
+    base["subtitleSegmentationMode"] = style.get("subtitleSegmentationMode", base["subtitleSegmentationMode"]) if style.get("subtitleSegmentationMode", base["subtitleSegmentationMode"]) in ("auto", "strict", "relaxed") else base["subtitleSegmentationMode"]
+    base["subtitleSpeakerNameMode"] = style.get("subtitleSpeakerNameMode", base["subtitleSpeakerNameMode"]) if style.get("subtitleSpeakerNameMode", base["subtitleSpeakerNameMode"]) in ("full", "short", "none") else base["subtitleSpeakerNameMode"]
+    base["subtitleMaxCharsPerCue"] = max(12, min(80, to_int(style.get("subtitleMaxCharsPerCue", base["subtitleMaxCharsPerCue"]), base["subtitleMaxCharsPerCue"])))
     return base
 
 
@@ -632,6 +701,7 @@ def process_task(task_id, params, saved_image_paths):
         storyboard = generate_storyboard_with_ai(params, params["script_api_key"], params["script_base_url"])
         storyboard = normalize_storyboard_scenes(storyboard, params["desired_scene_count"], len(saved_images))
         storyboard = optimize_dialogue_flow(storyboard, params["speaker_configs"])
+        storyboard = normalize_dialogue_for_tts_and_subtitles(storyboard, params["subtitle_style"])
 
         task_audio_dir = config.AUDIO_DIR / task_id
         task_img_dir = config.IMAGE_DIR / task_id
@@ -863,6 +933,9 @@ def generate_video():
         "subtitleMaxCharsPerLine": form.get("subtitleMaxCharsPerLine"),
         "subtitleBgOpacity": form.get("subtitleBgOpacity"),
         "subtitleOutline": form.get("subtitleOutline"),
+        "subtitleSegmentationMode": form.get("subtitleSegmentationMode", "auto"),
+        "subtitleMaxCharsPerCue": form.get("subtitleMaxCharsPerCue"),
+        "subtitleSpeakerNameMode": form.get("subtitleSpeakerNameMode", "short"),
     }, orientation)
 
     need_script_openai = script_provider in ("openai", "openai_compatible")
