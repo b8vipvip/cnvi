@@ -243,6 +243,17 @@ def get_openai_client(api_key, base_url):
     return OpenAI(api_key=api_key, base_url=base_url)
 
 
+def clean_tts_text(text):
+    text = (text or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    text = text.strip()
+    if not text:
+        return ""
+    if re.fullmatch(r"""[，。！？!?；;、,.…—\-~“”"'（）()《》【】\[\]：:\s]+""", text):
+        return ""
+    return text
+
+
 def generate_openai_tts(text, voice, emotion, speaker_style, speech_speed, tts_model, api_key, base_url, output_path):
     client = get_openai_client(api_key, base_url)
     instructions = f"请用中文短视频讲解语气朗读。角色风格：{speaker_style}。情绪：{emotion}。语速：{speech_speed}。自然停顿，不要机械，不要夸张。"
@@ -265,9 +276,21 @@ def generate_openai_tts(text, voice, emotion, speaker_style, speech_speed, tts_m
 
 
 def generate_edge_tts(text, voice, output_path):
+    tts_text = clean_tts_text(text)
+    if not tts_text:
+        raise ValueError("TTS 文本为空或只有标点，已跳过")
     edge_voice = voice if re.match(r"^zh-CN-[A-Za-z]+Neural$", str(voice or "")) else config.EDGE_TTS_VOICE_FALLBACK
     edge_tts_bin = get_edge_tts_bin()
-    run_cmd([edge_tts_bin, "--voice", edge_voice, "--text", text, "--write-media", output_path])
+    last_err = None
+    for _ in range(3):
+        try:
+            run_cmd([edge_tts_bin, "--voice", edge_voice, "--text", tts_text, "--write-media", output_path])
+            return
+        except Exception as e:
+            last_err = e
+            time.sleep(1)
+    preview = tts_text[:30]
+    raise RuntimeError(f"Edge TTS 失败（text前30字: {preview}）: {last_err}")
 
 
 def generate_openai_image(prompt, image_model, quality, size, api_key, base_url, output_path):
@@ -545,7 +568,7 @@ def split_text_to_subtitle_chunks(text, max_chars_per_line=18, max_lines=2, segm
             for j in range(0, len(seg), max_chars):
                 sentences.append(seg[j:j + max_chars])
     if mode == "strict":
-        return [x for x in sentences if x]
+        return [x for x in (clean_tts_text(v) for v in sentences) if x]
     merged = []
     for seg in sentences:
         if not merged:
@@ -557,14 +580,14 @@ def split_text_to_subtitle_chunks(text, max_chars_per_line=18, max_lines=2, segm
             merged[-1] += seg
         else:
             merged.append(seg)
-    return [x for x in merged if x]
+    return [x for x in (clean_tts_text(v) for v in merged) if x]
 
 def normalize_dialogue_for_tts_and_subtitles(storyboard, subtitle_style):
     style = subtitle_style or {}
     max_lines = max(1, to_int(style.get("subtitleMaxLines", 2), 2))
     max_chars_per_line = max(8, to_int(style.get("subtitleMaxCharsPerLine", 18), 18))
     mode = style.get("subtitleSegmentationMode", "auto")
-    cue_max_chars = max(12, to_int(style.get("subtitleMaxCharsPerCue", max_chars_per_line * max_lines), max_chars_per_line * max_lines))
+    cue_max_chars = max(8, to_int(style.get("subtitleMaxCharsPerCue", max_chars_per_line * max_lines), max_chars_per_line * max_lines))
     for scene in storyboard.get("scenes", []) or []:
         items = []
         for d in scene.get("dialogue", []) or []:
@@ -575,7 +598,10 @@ def normalize_dialogue_for_tts_and_subtitles(storyboard, subtitle_style):
             if not chunks:
                 continue
             for c in chunks:
-                items.append({"speaker_id": sid, "speaker_name": sname, "emotion": emotion, "text": c})
+                chunk = clean_tts_text(c)
+                if not chunk:
+                    continue
+                items.append({"speaker_id": sid, "speaker_name": sname, "emotion": emotion, "text": chunk})
         scene["dialogue"] = items
     return storyboard
 
@@ -648,7 +674,7 @@ def clamp_subtitle_style(style, orientation):
     base["subtitleOutline"] = max(0.0, min(5.0, float(style.get("subtitleOutline", base["subtitleOutline"]))))
     base["subtitleSegmentationMode"] = style.get("subtitleSegmentationMode", base["subtitleSegmentationMode"]) if style.get("subtitleSegmentationMode", base["subtitleSegmentationMode"]) in ("auto", "strict", "relaxed") else base["subtitleSegmentationMode"]
     base["subtitleSpeakerNameMode"] = style.get("subtitleSpeakerNameMode", base["subtitleSpeakerNameMode"]) if style.get("subtitleSpeakerNameMode", base["subtitleSpeakerNameMode"]) in ("full", "short", "none") else base["subtitleSpeakerNameMode"]
-    base["subtitleMaxCharsPerCue"] = max(12, min(80, to_int(style.get("subtitleMaxCharsPerCue", base["subtitleMaxCharsPerCue"]), base["subtitleMaxCharsPerCue"])))
+    base["subtitleMaxCharsPerCue"] = max(8, min(80, to_int(style.get("subtitleMaxCharsPerCue", base["subtitleMaxCharsPerCue"]), base["subtitleMaxCharsPerCue"])))
     return base
 
 
@@ -759,13 +785,17 @@ def process_task(task_id, params, saved_image_paths):
                 speaker_name = d.get("speaker_name") or speaker.get("name") or "主持人"
                 voice = speaker.get("voice") if params["enable_speaker_voices"] else params["default_voice"]
                 out_audio = task_audio_dir / f"scene_{sid:03d}_{i:03d}.mp3"
+                raw_text = d.get("text", "")
+                tts_text = clean_tts_text(raw_text)
+                if not tts_text:
+                    continue
                 if params["tts_provider"] == "edge_tts":
                     if not re.match(r"^zh-CN-[A-Za-z]+Neural$", str(voice or "")):
                         voice = config.EDGE_TTS_VOICE_FALLBACK
-                    generate_edge_tts(d.get("text", ""), voice, out_audio)
+                    generate_edge_tts(tts_text, voice, out_audio)
                 else:
                     generate_openai_tts(
-                        d.get("text", ""),
+                        tts_text,
                         voice or "marin",
                         d.get("emotion", params["tts_default_emotion"]),
                         speaker.get("style", "自然"),
@@ -780,7 +810,7 @@ def process_task(task_id, params, saved_image_paths):
                     "start": global_time,
                     "end": global_time + dur,
                     "speaker_name": speaker_name,
-                    "text": d.get("text", "")
+                    "text": tts_text
                 })
                 dialogue_voice_logs.append({"scene_id": sid, "line_index": i, "speaker_id": speaker_id, "speaker_name": speaker_name, "voice": voice})
                 global_time += dur
@@ -796,6 +826,9 @@ def process_task(task_id, params, saved_image_paths):
                 run_cmd(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", str(scene_pause_sec), "-q:a", "9", scene_silence])
                 scene_audio_files.append(scene_silence)
                 global_time += scene_pause_sec
+
+            if not scene_audio_files:
+                continue
 
             list_file = task_audio_dir / f"scene_{sid:03d}_concat.txt"
             with open(list_file, "w", encoding="utf-8") as f:
