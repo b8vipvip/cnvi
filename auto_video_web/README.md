@@ -95,6 +95,14 @@ edge-tts --version
 ```
 若仍报错，请确认服务使用的 Python 与虚拟环境一致，并确保 `venv/bin` 在 PATH 中。
 
+### 中文字幕显示方框/乱码排错（Ubuntu/Debian）
+```bash
+apt install -y fonts-noto-cjk fonts-wqy-microhei fontconfig
+fc-cache -fv
+fc-match "Noto Sans CJK SC"
+```
+项目会按以下优先级自动选择 ASS 字幕字体：`Noto Sans CJK SC` → `WenQuanYi Micro Hei` → `Source Han Sans SC` → `Microsoft YaHei` → `Arial Unicode MS` → `sans-serif`。
+
 ## 三类模型单独配置
 - 文案模型：用于生成分镜和多角色对话结构。
 - TTS 模型：用于生成每个角色的配音音频。

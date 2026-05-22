@@ -270,6 +270,95 @@ def generate_openai_image(prompt, image_model, quality, size, api_key, base_url,
         f.write(raw)
 
 
+def estimate_auto_scene_count(duration_mode, target_duration, script_text):
+    if duration_mode == "15":
+        return 5
+    if duration_mode == "30":
+        return 7
+    if duration_mode == "45":
+        return 9
+    if duration_mode == "60":
+        return 11
+    if duration_mode == "auto":
+        text_len = len((script_text or "").strip())
+        if text_len < 120:
+            return 6
+        if text_len < 260:
+            return 8
+        if text_len < 420:
+            return 10
+        return 12
+    if target_duration > 0:
+        return max(4, min(12, round(target_duration / 6)))
+    return 8
+
+
+def resolve_desired_scene_count(params):
+    mode = str(params.get("scene_count_mode", "auto"))
+    if mode in {"6", "8", "10", "12"}:
+        return int(mode)
+    if mode == "custom":
+        return max(3, min(30, to_int(params.get("custom_scene_count", 10), 10)))
+    return estimate_auto_scene_count(params.get("duration_mode", "auto"), params.get("target_duration", 0), params.get("script_text", ""))
+
+
+def split_scene_if_needed(scene):
+    dialogue = scene.get("dialogue", [])
+    if len(dialogue) <= 4:
+        return [scene]
+    pivot = len(dialogue) // 2
+    first = dict(scene)
+    second = dict(scene)
+    first["dialogue"] = dialogue[:pivot]
+    second["dialogue"] = dialogue[pivot:]
+    return [first, second]
+
+
+def normalize_storyboard_scenes(storyboard, desired_scene_count, image_count):
+    scenes = storyboard.get("scenes", []) or []
+    if desired_scene_count > 0 and len(scenes) < math.ceil(desired_scene_count * 0.6):
+        expanded = []
+        for scene in scenes:
+            expanded.extend(split_scene_if_needed(scene))
+        scenes = expanded
+
+    if not scenes:
+        storyboard["scenes"] = []
+        return storyboard
+
+    safe_image_count = max(1, image_count)
+    for idx, scene in enumerate(scenes, start=1):
+        scene["scene_id"] = idx
+        raw_img_idx = scene.get("image_index")
+        parsed = to_int(raw_img_idx, -1)
+        if isinstance(raw_img_idx, str) and raw_img_idx.strip().isdigit():
+            parsed = int(raw_img_idx.strip())
+        if parsed < 0 or parsed >= safe_image_count:
+            parsed = (idx - 1) % safe_image_count
+        scene["image_index"] = parsed
+    storyboard["scenes"] = scenes
+    return storyboard
+
+
+def get_ass_font_name():
+    candidates = [
+        "Noto Sans CJK SC",
+        "WenQuanYi Micro Hei",
+        "Source Han Sans SC",
+        "Microsoft YaHei",
+        "Arial Unicode MS",
+        "sans-serif",
+    ]
+    for font in candidates:
+        try:
+            p = subprocess.run(["fc-match", font], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if p.returncode == 0 and p.stdout.strip() and "DejaVuSans" not in p.stdout:
+                return font
+        except Exception:
+            continue
+    return "sans-serif"
+
+
 def fallback_storyboard(script_text, target_duration, speaker_configs, image_count, image_strategy):
     chunks = [x.strip() for x in re.split(r"[。！？!\n]", script_text) if x.strip()]
     if not chunks:
@@ -319,6 +408,7 @@ def generate_storyboard_with_ai(params, api_key, base_url):
         "imageCount": params["image_count"],
         "imageStrategy": params["image_strategy"],
         "speakerConfigs": speaker_configs,
+        "desiredSceneCount": params["desired_scene_count"],
     }
     notebooklm_mode = "notebooklm" in (params.get("dialogue_style", "").lower()) or ("音频概览" in params.get("dialogue_style", ""))
     if notebooklm_mode:
@@ -340,7 +430,7 @@ def generate_storyboard_with_ai(params, api_key, base_url):
 主持人B：对，这种互动感，家长在家陪读的时候会轻松很多。"""
     else:
         sys = "你是短视频分镜编剧。必须输出严格JSON，不允许markdown。儿童内容合规，禁止夸大功效。"
-    usr = "按要求生成 JSON：title,summary,target_duration,speakers,scenes。每个scene有scene_id,caption,visual_type,image_index,image_prompt,dialogue。"
+    usr = "按要求生成 JSON：title,summary,target_duration,speakers,scenes。每个scene有scene_id,caption,visual_type,image_index,image_prompt,dialogue。请尽量生成接近 desiredSceneCount 的 scenes。每个 scene 只表达一个小观点，每个 scene 的 dialogue 不要太长，60 秒建议 10-12 个 scene，尽量多切换画面，不要 1 张图撑很久。上传了多图时尽量让不同 scene 使用不同 image_index。image_index 必须是整数，从 0 开始。"
     rsp = client.chat.completions.create(
         model=params["script_model"],
         messages=[
@@ -384,8 +474,8 @@ def build_subtitles(items, show_name, srt_path, ass_path, orientation):
             f.write(f"{idx}\n{srt_time(it['start'])} --> {srt_time(it['end'])}\n{text}\n\n")
 
     play_res_x, play_res_y = (1080, 1920) if orientation == "portrait" else (1920, 1080)
-    style_font = "Microsoft YaHei"
-    fs = 44 if orientation == "portrait" else 38
+    style_font = get_ass_font_name()
+    fs = 46 if orientation == "portrait" else 36
     margin_v = 120
     header = """[Script]
 ScriptType: v4.00+
@@ -397,7 +487,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2.2,0,2,40,40,{mv},1
+Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,40,40,{mv},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -418,6 +508,7 @@ def process_task(task_id, params, saved_image_paths):
         update_task(task_id, message="保存图片完成", progress=10)
         update_task(task_id, message="AI 改写分镜", progress=20)
         storyboard = generate_storyboard_with_ai(params, params["script_api_key"], params["script_base_url"])
+        storyboard = normalize_storyboard_scenes(storyboard, params["desired_scene_count"], len(saved_images))
 
         task_audio_dir = config.AUDIO_DIR / task_id
         task_img_dir = config.IMAGE_DIR / task_id
@@ -440,7 +531,8 @@ def process_task(task_id, params, saved_image_paths):
 
             use_uploaded = scene.get("visual_type") == "uploaded_image" or params["image_strategy"] == "uploaded_only"
             if use_uploaded and saved_images:
-                src = saved_images[to_int(scene.get("image_index", 0), 0) % len(saved_images)]
+                img_idx = to_int(scene.get("image_index", scene_index - 1), scene_index - 1) % len(saved_images)
+                src = saved_images[img_idx]
                 shutil.copy(src, raw_scene_img)
             elif not use_uploaded and params["enable_ai_image"] and params["image_api_key"]:
                 try:
@@ -448,13 +540,15 @@ def process_task(task_id, params, saved_image_paths):
                     generate_openai_image(scene.get("image_prompt", params["image_style_prompt"]), params["image_model"], params["image_quality"], size, params["image_api_key"], params["image_base_url"], raw_scene_img)
                 except Exception:
                     if saved_images:
-                        src = saved_images[to_int(scene.get("image_index", 0), 0) % len(saved_images)]
+                        img_idx = to_int(scene.get("image_index", scene_index - 1), scene_index - 1) % len(saved_images)
+                        src = saved_images[img_idx]
                         shutil.copy(src, raw_scene_img)
                     else:
                         Image.new("RGB", (1536, 1024), (40, 40, 40)).save(raw_scene_img)
             else:
                 if saved_images:
-                    src = saved_images[to_int(scene.get("image_index", 0), 0) % len(saved_images)]
+                    img_idx = to_int(scene.get("image_index", scene_index - 1), scene_index - 1) % len(saved_images)
+                    src = saved_images[img_idx]
                     shutil.copy(src, raw_scene_img)
                 else:
                     Image.new("RGB", (1536, 1024), (40, 40, 40)).save(raw_scene_img)
@@ -598,6 +692,12 @@ def generate_video():
     custom_duration = int(form.get("customDuration", "60") or 60)
     if duration_mode == "custom" and not (5 <= custom_duration <= 300):
         return jsonify({"success": False, "error": "customDuration 需在 5-300"}), 400
+    scene_count_mode = form.get("sceneCountMode", "auto")
+    if scene_count_mode not in ("auto", "6", "8", "10", "12", "custom"):
+        return jsonify({"success": False, "error": "sceneCountMode 非法"}), 400
+    custom_scene_count = int(form.get("customSceneCount", "10") or 10)
+    if scene_count_mode == "custom" and not (3 <= custom_scene_count <= 30):
+        return jsonify({"success": False, "error": "customSceneCount 需在 3-30"}), 400
 
     image_strategy = form.get("imageStrategy", "ai_fill")
     if image_strategy == "uploaded_only" and not files:
@@ -707,6 +807,8 @@ def generate_video():
         "orientation": orientation,
         "duration_mode": duration_mode,
         "target_duration": target_duration,
+        "scene_count_mode": scene_count_mode,
+        "custom_scene_count": custom_scene_count,
         "video_style": form.get("videoStyle", "NotebookLM 音频概览风格"),
         "subtitle_mode": form.get("subtitleMode", "both"),
         "show_speaker_name": form.get("showSpeakerName", "true") == "true",
@@ -740,6 +842,7 @@ def generate_video():
         "dialogue_pause_sec": dialogue_pause_ms / 1000,
         "scene_pause_sec": scene_pause_ms / 1000,
     }
+    params["desired_scene_count"] = resolve_desired_scene_count(params)
 
     t = threading.Thread(target=process_task, args=(task_id, params, saved_image_paths), daemon=True)
     t.start()
