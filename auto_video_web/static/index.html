@@ -15,6 +15,18 @@
     <section><h2>D. 配音区域</h2><div class="grid2"><select id="narrationMode"><option value="monologue">单人口播</option><option value="dialogue2" selected>双人对话</option><option value="dialogue3">三人对话</option><option value="dialogue4">四人对话</option></select><select id="dialogueStyle"><option selected>NotebookLM 音频概览</option><option>轻松聊天</option></select></div><div id="speakerConfigs" class="speaker-grid"></div></section>
     <section><h2>D2. 对话停顿设置</h2><p>适当停顿可以让多人对话更自然。建议每句话 200-500ms，场景间 500-1000ms。</p><div class="grid2"><label>每句话间隔时间（毫秒）<input id="dialoguePauseMs" type="number" min="0" max="2000" step="100" value="300" /></label><label>每个场景间隔时间（毫秒）<input id="scenePauseMs" type="number" min="0" max="3000" step="100" value="500" /></label></div></section>
 
+    
+    <section><h2>D3. 字幕样式设置</h2><div class="grid2">
+      <label>字幕字号<input id="subtitleFontSize" type="range" min="18" max="52" step="1" value="30" /><input id="subtitleFontSizeNum" type="number" min="18" max="52" step="1" value="30" /></label>
+      <label>字幕距底部距离<input id="subtitleMarginBottom" type="range" min="30" max="400" step="5" value="120" /><input id="subtitleMarginBottomNum" type="number" min="30" max="400" step="5" value="120" /></label>
+      <label>字幕左右边距<input id="subtitleMarginX" type="range" min="20" max="240" step="5" value="70" /><input id="subtitleMarginXNum" type="number" min="20" max="240" step="5" value="70" /></label>
+      <label>字幕最大行数<select id="subtitleMaxLines"><option>1</option><option selected>2</option><option>3</option></select></label>
+      <label>每行最大字数<input id="subtitleMaxCharsPerLine" type="number" min="8" max="40" value="18" /></label>
+      <label>字幕背景透明度<input id="subtitleBgOpacity" type="range" min="0" max="90" step="5" value="45" /><input id="subtitleBgOpacityNum" type="number" min="0" max="90" step="5" value="45" /></label>
+      <label>字幕描边粗细<input id="subtitleOutline" type="range" min="0" max="5" step="0.5" value="2" /><input id="subtitleOutlineNum" type="number" min="0" max="5" step="0.5" value="2" /></label>
+      <label>字幕预览文本<textarea id="subtitlePreviewText">主持人A：嗯，对，这种互动方式比单纯看动画更适合亲子陪伴。</textarea></label>
+    </div><div id="subtitlePreviewBox" class="subtitle-preview"><div id="subtitlePreviewTextRender"></div></div></section>
+
     <section><h2>E. API 配置</h2>
       <p>推荐生产环境使用服务器 .env 的 OPENAI_API_KEY。前端 Key 仅用于当前任务，只有勾选时才保存到 localStorage。</p>
       <label><input id="saveLocal" type="checkbox" /> 允许保存 API Key 到本机浏览器</label>

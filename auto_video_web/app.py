@@ -428,15 +428,21 @@ def generate_storyboard_with_ai(params, api_key, base_url):
 2) 角色之间必须有回应、追问、补充、总结，形成自然承接。
 3) 允许适量使用语气词和过渡词：嗯、是的、没错、对、确实、哇、你看、其实、换句话说、我觉得、这里有个重点、这就很有意思了、对这点很关键。
 4) 语气词不要每句都加，避免重复和油腻。
-5) 每句 text 建议 12-35 个中文字符，适合 TTS 自然朗读。
-6) 每个 scene 的 dialogue 尽量 2-4 句；双人模式尽量 A/B 交替；三人四人模式要有自然插话和补充。
+5) 每句 text 建议 8-28 个中文字符，允许少量 2-8 字短回应。
+6) 严禁机械 ABAB 轮流；允许同一角色连续 2 句（短句），并包含插话/承接。
 7) 儿童早教合规：禁止“保证变聪明”“开发智商”“治疗专注力”；可表达“帮助锻炼观察力、提升亲子互动、培养阅读兴趣、更愿意观察和表达”。
 8) 建议结构：A 提出观点/引问题 → B 回应补充 → A 承接解释 → B 举例或转下个卖点 → A/B 收束总结。
-示例风格（仅作语气示例，不可原样照抄）：
-主持人A：你有没有发现，两岁左右的宝宝，其实特别喜欢找东西？
-主持人B：嗯，是的。像这种捉迷藏绘本，就很容易把宝宝的注意力吸引过来。
-主持人A：没错，它不是硬教，而是让孩子一边看一边找。
-主持人B：对，这种互动感，家长在家陪读的时候会轻松很多。"""
+错误示例：
+主持人A：这套书可以锻炼观察力。
+主持人B：这套书可以提升专注力。
+主持人A：这套书适合亲子互动。
+主持人B：这套书全套有七本。
+正确示例：
+主持人A：你发现没有，一岁半之后的宝宝特别爱找东西。
+主持人B：嗯，对，而且他不是乱看，是会盯着细节看。
+主持人A：没错。像这种捉迷藏绘本，就很适合拿来做互动。
+主持人B：对，家长不用硬教，问一句“苹果去哪了”，孩子就会主动找。
+主持人A：这个过程，其实就在练观察和表达。"""
     else:
         sys = "你是短视频分镜编剧。必须输出严格JSON，不允许markdown。儿童内容合规，禁止夸大功效。"
     usr = "按要求生成 JSON：title,summary,target_duration,speakers,scenes。每个scene有scene_id,caption,visual_type,image_index,image_prompt,dialogue。请尽量生成接近 desiredSceneCount 的 scenes。每个 scene 只表达一个小观点，每个 scene 的 dialogue 不要太长，60 秒建议 10-12 个 scene，尽量多切换画面，不要 1 张图撑很久。上传了多图时尽量让不同 scene 使用不同 image_index。image_index 必须是整数，从 0 开始。"
@@ -476,21 +482,47 @@ def ass_time(sec):
     return f"{h}:{m:02d}:{s:05.2f}"
 
 
-def wrap_ass_text(text, max_chars_per_line):
+def wrap_subtitle_text(text, max_chars_per_line=18, max_lines=2):
     plain = re.sub(r"\s+", "", (text or ""))
     if not plain:
         return ""
+    pieces = [x for x in re.split(r"([，。！？、；：])", plain) if x]
+    segments = []
+    i = 0
+    while i < len(pieces):
+        seg = pieces[i]
+        if i + 1 < len(pieces) and re.fullmatch(r"[，。！？、；：]", pieces[i + 1]):
+            seg += pieces[i + 1]
+            i += 2
+        else:
+            i += 1
+        segments.append(seg)
+
     lines = []
-    while plain and len(lines) < 2:
-        chunk = plain[:max_chars_per_line]
-        plain = plain[max_chars_per_line:]
-        lines.append(chunk)
-    if plain:
+    current = ""
+    for seg in segments:
+        if len(seg) > max_chars_per_line:
+            if current:
+                lines.append(current)
+                current = ""
+            for j in range(0, len(seg), max_chars_per_line):
+                lines.append(seg[j:j + max_chars_per_line])
+            continue
+        if len(current + seg) <= max_chars_per_line:
+            current += seg
+        else:
+            lines.append(current)
+            current = seg
+    if current:
+        lines.append(current)
+
+    lines = lines[:max_lines]
+    if len("".join(lines)) < len(plain) and lines:
         lines[-1] = lines[-1][: max(0, max_chars_per_line - 1)] + "…"
     return "\\N".join(lines)
 
 
-def build_subtitles(items, show_name, srt_path, ass_path, orientation):
+def build_subtitles(items, show_name, srt_path, ass_path, orientation, subtitle_style):
     with open(srt_path, "w", encoding="utf-8") as f:
         for idx, it in enumerate(items, 1):
             text = f"{it['speaker_name']}：{it['text']}" if show_name else it["text"]
@@ -498,12 +530,17 @@ def build_subtitles(items, show_name, srt_path, ass_path, orientation):
 
     play_res_x, play_res_y = (1080, 1920) if orientation == "portrait" else (1920, 1080)
     style_font = get_ass_font_name()
-    is_portrait = orientation == "portrait"
-    fs = 36 if is_portrait else 32
-    margin_v = 180 if is_portrait else 80
-    margin_l = 70 if is_portrait else 120
-    margin_r = 70 if is_portrait else 120
-    max_chars = 18 if is_portrait else 28
+    fs = subtitle_style["subtitleFontSize"]
+    margin_v = subtitle_style["subtitleMarginBottom"]
+    margin_l = subtitle_style["subtitleMarginX"]
+    margin_r = subtitle_style["subtitleMarginX"]
+    max_chars = subtitle_style["subtitleMaxCharsPerLine"]
+    max_lines = subtitle_style["subtitleMaxLines"]
+    outline = subtitle_style["subtitleOutline"]
+    bg_opacity = subtitle_style["subtitleBgOpacity"]
+    back_alpha = int(round((100 - bg_opacity) * 255 / 100))
+    back_colour = f"&H{back_alpha:02X}000000"
+    border_style = 4 if bg_opacity > 0 else 1
     header = """[Script]
 ScriptType: v4.00+
 Collisions: Normal
@@ -514,18 +551,76 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,{ml},{mr},{mv},1
+Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,{back_colour},0,0,0,0,100,100,0,0,{border_style},{outline},0,2,{ml},{mr},{mv},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""".format(x=play_res_x, y=play_res_y, font=style_font, fs=fs, mv=margin_v, ml=margin_l, mr=margin_r)
+""".format(x=play_res_x, y=play_res_y, font=style_font, fs=fs, mv=margin_v, ml=margin_l, mr=margin_r, back_colour=back_colour, border_style=border_style, outline=outline)
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(header)
         for it in items:
             text = f"{it['speaker_name']}：{it['text']}" if show_name else it["text"]
-            text = wrap_ass_text(text.replace("\n", ""), max_chars)
+            text = wrap_subtitle_text(text.replace("\n", ""), max_chars, max_lines)
             f.write(f"Dialogue: 0,{ass_time(it['start'])},{ass_time(it['end'])},Default,,0,0,0,,{text}\n")
 
+
+
+
+def clamp_subtitle_style(style, orientation):
+    defaults = {
+        "portrait": {"subtitleFontSize": 30, "subtitleMarginBottom": 120, "subtitleMarginX": 70, "subtitleMaxLines": 2, "subtitleMaxCharsPerLine": 18, "subtitleBgOpacity": 45, "subtitleOutline": 2},
+        "landscape": {"subtitleFontSize": 26, "subtitleMarginBottom": 70, "subtitleMarginX": 120, "subtitleMaxLines": 2, "subtitleMaxCharsPerLine": 28, "subtitleBgOpacity": 45, "subtitleOutline": 2},
+    }
+    base = defaults.get(orientation, defaults["portrait"]).copy()
+    style = style or {}
+    base["subtitleFontSize"] = max(18, min(52, to_int(style.get("subtitleFontSize", base["subtitleFontSize"]), base["subtitleFontSize"])))
+    base["subtitleMarginBottom"] = max(30, min(400, to_int(style.get("subtitleMarginBottom", base["subtitleMarginBottom"]), base["subtitleMarginBottom"])))
+    base["subtitleMarginX"] = max(20, min(240, to_int(style.get("subtitleMarginX", base["subtitleMarginX"]), base["subtitleMarginX"])))
+    base["subtitleMaxLines"] = max(1, min(3, to_int(style.get("subtitleMaxLines", base["subtitleMaxLines"]), base["subtitleMaxLines"])))
+    base["subtitleMaxCharsPerLine"] = max(8, min(40, to_int(style.get("subtitleMaxCharsPerLine", base["subtitleMaxCharsPerLine"]), base["subtitleMaxCharsPerLine"])))
+    base["subtitleBgOpacity"] = max(0, min(90, to_int(style.get("subtitleBgOpacity", base["subtitleBgOpacity"]), base["subtitleBgOpacity"])))
+    base["subtitleOutline"] = max(0.0, min(5.0, float(style.get("subtitleOutline", base["subtitleOutline"]))))
+    return base
+
+
+def optimize_dialogue_flow(storyboard, speaker_configs):
+    speakers = {s.get("id"): s for s in (speaker_configs or []) if s.get("id")}
+    short_replies = ["嗯，对。", "是的。", "没错。", "这点很关键。", "对，我也这么看。"]
+    for scene in storyboard.get("scenes", []) or []:
+        dialogs = scene.get("dialogue", []) or []
+        normalized = []
+        for d in dialogs:
+            text = str(d.get("text", "")).strip()
+            sid = d.get("speaker_id") or d.get("speaker") or "S1"
+            sname = d.get("speaker_name") or speakers.get(sid, {}).get("name", "主持人")
+            emotion = d.get("emotion", "自然")
+            chunks = [x.strip() for x in re.split(r"(?<=[，。！？；：])", text) if x.strip()]
+            if not chunks:
+                chunks = [text]
+            if len(text) > 28 and len(chunks) > 1:
+                for c in chunks[:3]:
+                    normalized.append({"speaker_id": sid, "speaker_name": sname, "text": c[:28], "emotion": emotion})
+            else:
+                normalized.append({"speaker_id": sid, "speaker_name": sname, "text": text[:28], "emotion": emotion})
+
+        if len(normalized) == 1:
+            base = normalized[0]
+            txt = base["text"]
+            parts = [x.strip() for x in re.split(r"[，。！？；：]", txt) if x.strip()]
+            if len(parts) >= 2:
+                normalized = [dict(base, text=parts[0]), dict(base, text=parts[1])]
+            else:
+                other = next((x for x in speakers.keys() if x != base["speaker_id"]), base["speaker_id"])
+                normalized = [base, {"speaker_id": other, "speaker_name": speakers.get(other, {}).get("name", base["speaker_name"]), "text": "嗯，对。", "emotion": "自然"}]
+
+        if len(normalized) >= 7:
+            strict = all(normalized[i]["speaker_id"] != normalized[i-1]["speaker_id"] for i in range(1, min(7, len(normalized))))
+            if strict:
+                anchor = normalized[1]
+                normalized.insert(2, {"speaker_id": anchor["speaker_id"], "speaker_name": anchor["speaker_name"], "text": short_replies[scene.get("scene_id",1)%len(short_replies)], "emotion": "自然"})
+
+        scene["dialogue"] = [x for x in normalized if x.get("text")]
+    return storyboard
 
 def process_task(task_id, params, saved_image_paths):
     try:
@@ -536,6 +631,7 @@ def process_task(task_id, params, saved_image_paths):
         update_task(task_id, message="AI 改写分镜", progress=20)
         storyboard = generate_storyboard_with_ai(params, params["script_api_key"], params["script_base_url"])
         storyboard = normalize_storyboard_scenes(storyboard, params["desired_scene_count"], len(saved_images))
+        storyboard = optimize_dialogue_flow(storyboard, params["speaker_configs"])
 
         task_audio_dir = config.AUDIO_DIR / task_id
         task_img_dir = config.IMAGE_DIR / task_id
@@ -650,7 +746,7 @@ def process_task(task_id, params, saved_image_paths):
         update_task(task_id, message="生成字幕", progress=70)
         srt_path = task_sub_dir / "subtitles.srt"
         ass_path = task_sub_dir / "subtitles.ass"
-        build_subtitles(subtitle_items, params["show_speaker_name"], srt_path, ass_path, params["orientation"])
+        build_subtitles(subtitle_items, params["show_speaker_name"], srt_path, ass_path, params["orientation"], params["subtitle_style"])
 
         update_task(task_id, message="合成视频", progress=85)
         concat_list = task_video_dir / "all_scenes.txt"
@@ -759,6 +855,15 @@ def generate_video():
     image_model = resolve_with_fallback(form.get("imageModel", ""), "", config.OPENAI_IMAGE_MODEL, config.DEFAULT_IMAGE_MODEL)
     dialogue_pause_ms = max(0, min(2000, int(form.get("dialoguePauseMs", "300") or 300)))
     scene_pause_ms = max(0, min(3000, int(form.get("scenePauseMs", "500") or 500)))
+    subtitle_style = clamp_subtitle_style({
+        "subtitleFontSize": form.get("subtitleFontSize"),
+        "subtitleMarginBottom": form.get("subtitleMarginBottom"),
+        "subtitleMarginX": form.get("subtitleMarginX"),
+        "subtitleMaxLines": form.get("subtitleMaxLines"),
+        "subtitleMaxCharsPerLine": form.get("subtitleMaxCharsPerLine"),
+        "subtitleBgOpacity": form.get("subtitleBgOpacity"),
+        "subtitleOutline": form.get("subtitleOutline"),
+    }, orientation)
 
     need_script_openai = script_provider in ("openai", "openai_compatible")
     need_tts_openai = tts_provider == "openai"
@@ -812,7 +917,7 @@ def generate_video():
             "status": "pending",
             "progress": 0,
             "message": "已创建任务",
-            "request_params": json.dumps({**sanitize_request_params(form), "dialoguePauseMs": str(dialogue_pause_ms), "scenePauseMs": str(scene_pause_ms)}, ensure_ascii=False),
+            "request_params": json.dumps({**sanitize_request_params(form), "dialoguePauseMs": str(dialogue_pause_ms), "scenePauseMs": str(scene_pause_ms), **subtitle_style}, ensure_ascii=False),
             "speaker_configs": speaker_configs_raw,
             "image_count": len(saved_image_paths),
             "orientation": orientation,
@@ -878,6 +983,7 @@ def generate_video():
         "image_style_prompt": form.get("imageStylePrompt", "温暖亲子场景"),
         "dialogue_pause_sec": dialogue_pause_ms / 1000,
         "scene_pause_sec": scene_pause_ms / 1000,
+        "subtitle_style": subtitle_style,
     }
     params["desired_scene_count"] = resolve_desired_scene_count(params)
 
@@ -899,6 +1005,21 @@ def config_defaults():
     })
 
 
+
+
+@app.route("/api/user-settings", methods=["GET"])
+def get_user_settings():
+    style = db.get_app_setting("subtitle_style", None)
+    style = clamp_subtitle_style(style or {}, "portrait")
+    return jsonify({"success": True, "subtitleStyle": style})
+
+
+@app.route("/api/user-settings", methods=["POST"])
+def set_user_settings():
+    data = request.get_json(silent=True) or {}
+    style = clamp_subtitle_style((data.get("subtitleStyle") or {}), "portrait")
+    db.set_app_setting("subtitle_style", style)
+    return jsonify({"success": True, "subtitleStyle": style})
 
 
 @app.route("/api/tts-preview", methods=["POST"])

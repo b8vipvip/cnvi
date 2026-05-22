@@ -2,3 +2,7 @@
 @media (max-width:900px){.api-cards,.grid3,.grid2{grid-template-columns:1fr}}
 
 .topnav{display:flex;gap:8px;margin-bottom:12px}.topnav a{padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;text-decoration:none;color:#0f172a;background:#fff}.topnav a.active{background:#2563eb;color:#fff}.badge{display:inline-block;padding:2px 8px;border-radius:999px;color:#fff;font-size:12px}.badge.pending{background:#6b7280}.badge.running{background:#2563eb}.badge.success{background:#16a34a}.badge.failed{background:#dc2626}.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);padding:20px}.modal-content{background:#fff;max-width:900px;margin:0 auto;border-radius:12px;padding:12px}
+.subtitle-preview{position:relative;max-width:360px;background:linear-gradient(135deg,#666,#888);border-radius:8px;overflow:hidden}
+.subtitle-preview::before{content:'';display:block;padding-top:177.78%}
+.subtitle-preview.landscape::before{padding-top:56.25%}
+#subtitlePreviewTextRender{position:absolute;left:0;right:0;color:#fff;text-align:center;line-height:1.35;padding:8px;word-break:break-all}
