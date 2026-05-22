@@ -53,6 +53,7 @@ DEFAULT_SPEAKERS = [
     {"id": "S3", "name": "主持人C", "role": "补充观点", "voice": "cedar", "style": "简洁、有节奏"},
     {"id": "S4", "name": "主持人D", "role": "总结收束", "voice": "shimmer", "style": "温暖、鼓励"},
 ]
+EDGE_DEFAULT_VOICES = ["zh-CN-YunxiNeural", "zh-CN-XiaoxiaoNeural", "zh-CN-YunjianNeural", "zh-CN-XiaoyiNeural"]
 
 
 
@@ -96,23 +97,24 @@ def resolve_with_fallback(primary_value, common_value, env_value, default_value=
     return (primary_value or "").strip() or (common_value or "").strip() or (env_value or "").strip() or (default_value or "").strip()
 
 
-def default_speakers_for_mode(mode):
+def default_speakers_for_mode(mode, tts_provider="openai"):
+    voice_pool = EDGE_DEFAULT_VOICES if tts_provider == "edge_tts" else ["marin", "nova", "cedar", "shimmer"]
     mapping = {
-        "monologue": [{"id":"S1","name":"旁白","role":"短视频口播","voice":"nova","style":"自然、温柔、有亲和力"}],
+        "monologue": [{"id":"S1","name":"旁白","role":"短视频口播","voice":voice_pool[0],"style":"自然、温柔、有亲和力"}],
         "dialogue2": [
-            {"id":"S1","name":"主持人A","role":"理性介绍","voice":"marin","style":"自然、清晰、像知识型短视频主持人"},
-            {"id":"S2","name":"主持人B","role":"宝妈体验","voice":"nova","style":"温柔、有亲和力、带一点惊喜和真实体验感"},
+            {"id":"S1","name":"主持人A","role":"理性介绍","voice":voice_pool[0],"style":"自然、清晰、像知识型短视频主持人"},
+            {"id":"S2","name":"主持人B","role":"宝妈体验","voice":voice_pool[1],"style":"温柔、有亲和力、带一点惊喜和真实体验感"},
         ],
         "dialogue3": [
-            {"id":"S1","name":"主持人A","role":"引导话题","voice":"marin","style":"自然、清晰、负责引出主题"},
-            {"id":"S2","name":"宝妈","role":"真实体验","voice":"nova","style":"温柔、真实、有亲和力"},
-            {"id":"S3","name":"专家","role":"补充解释","voice":"cedar","style":"稳重、清晰、像早教科普解释"},
+            {"id":"S1","name":"主持人A","role":"引导话题","voice":voice_pool[0],"style":"自然、清晰、负责引出主题"},
+            {"id":"S2","name":"宝妈","role":"真实体验","voice":voice_pool[1],"style":"温柔、真实、有亲和力"},
+            {"id":"S3","name":"专家","role":"补充解释","voice":voice_pool[2],"style":"稳重、清晰、像早教科普解释"},
         ],
         "dialogue4": [
-            {"id":"S1","name":"主持人A","role":"开场引导","voice":"marin","style":"自然、清晰"},
-            {"id":"S2","name":"主持人B","role":"互动回应","voice":"nova","style":"温柔、有互动感"},
-            {"id":"S3","name":"宝妈","role":"使用体验","voice":"shimmer","style":"真实、亲切、像日常分享"},
-            {"id":"S4","name":"专家","role":"科普总结","voice":"cedar","style":"稳重、简洁、可信"},
+            {"id":"S1","name":"主持人A","role":"开场引导","voice":voice_pool[0],"style":"自然、清晰"},
+            {"id":"S2","name":"主持人B","role":"互动回应","voice":voice_pool[1],"style":"温柔、有互动感"},
+            {"id":"S3","name":"宝妈","role":"使用体验","voice":voice_pool[3],"style":"真实、亲切、像日常分享"},
+            {"id":"S4","name":"专家","role":"科普总结","voice":voice_pool[2],"style":"稳重、简洁、可信"},
         ],
     }
     return mapping.get(mode, mapping["dialogue2"])
@@ -188,12 +190,18 @@ def cover_resize(img, target_w, target_h):
 
 def draw_big_caption(img, text):
     draw = ImageDraw.Draw(img, "RGBA")
-    font = choose_font(58)
-    max_width = img.width - 120
+    font_size = 44 if img.height >= img.width else 36
+    font = choose_font(font_size)
+    max_chars = 12
+    max_width = int(img.width * 0.7)
     words = list(text)
     lines = []
     cur = ""
     for ch in words:
+        if len(cur) >= max_chars:
+            lines.append(cur)
+            cur = ch
+            continue
         test = cur + ch
         if draw.textlength(test, font=font) <= max_width:
             cur = test
@@ -204,13 +212,14 @@ def draw_big_caption(img, text):
         lines.append(cur)
     if len(lines) > 2:
         lines = lines[:2]
+        lines[-1] = lines[-1][: max(0, max_chars - 1)] + "…"
     final_text = "\n".join(lines)
     bbox = draw.multiline_textbbox((0, 0), final_text, font=font, spacing=8)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     x = (img.width - tw) // 2
-    y = int(img.height * 0.67)
-    pad = 24
-    draw.rounded_rectangle((x - pad, y - pad, x + tw + pad, y + th + pad), radius=18, fill=(0, 0, 0, 135))
+    y = int(img.height * 0.22)
+    pad_x, pad_y = 18, 14
+    draw.rounded_rectangle((x - pad_x, y - pad_y, x + tw + pad_x, y + th + pad_y), radius=16, fill=(0, 0, 0, 125))
     draw.multiline_text((x, y), final_text, font=font, fill=(255, 255, 255, 255), spacing=8)
     return img
 
@@ -256,7 +265,7 @@ def generate_openai_tts(text, voice, emotion, speaker_style, speech_speed, tts_m
 
 
 def generate_edge_tts(text, voice, output_path):
-    edge_voice = voice if "-" in voice else config.EDGE_TTS_VOICE_FALLBACK
+    edge_voice = voice if re.match(r"^zh-CN-[A-Za-z]+Neural$", str(voice or "")) else config.EDGE_TTS_VOICE_FALLBACK
     edge_tts_bin = get_edge_tts_bin()
     run_cmd([edge_tts_bin, "--voice", edge_voice, "--text", text, "--write-media", output_path])
 
@@ -467,6 +476,20 @@ def ass_time(sec):
     return f"{h}:{m:02d}:{s:05.2f}"
 
 
+def wrap_ass_text(text, max_chars_per_line):
+    plain = re.sub(r"\s+", "", (text or ""))
+    if not plain:
+        return ""
+    lines = []
+    while plain and len(lines) < 2:
+        chunk = plain[:max_chars_per_line]
+        plain = plain[max_chars_per_line:]
+        lines.append(chunk)
+    if plain:
+        lines[-1] = lines[-1][: max(0, max_chars_per_line - 1)] + "…"
+    return "\\N".join(lines)
+
+
 def build_subtitles(items, show_name, srt_path, ass_path, orientation):
     with open(srt_path, "w", encoding="utf-8") as f:
         for idx, it in enumerate(items, 1):
@@ -475,8 +498,12 @@ def build_subtitles(items, show_name, srt_path, ass_path, orientation):
 
     play_res_x, play_res_y = (1080, 1920) if orientation == "portrait" else (1920, 1080)
     style_font = get_ass_font_name()
-    fs = 46 if orientation == "portrait" else 36
-    margin_v = 120
+    is_portrait = orientation == "portrait"
+    fs = 36 if is_portrait else 32
+    margin_v = 180 if is_portrait else 80
+    margin_l = 70 if is_portrait else 120
+    margin_r = 70 if is_portrait else 120
+    max_chars = 18 if is_portrait else 28
     header = """[Script]
 ScriptType: v4.00+
 Collisions: Normal
@@ -487,16 +514,16 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,40,40,{mv},1
+Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,{ml},{mr},{mv},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""".format(x=play_res_x, y=play_res_y, font=style_font, fs=fs, mv=margin_v)
+""".format(x=play_res_x, y=play_res_y, font=style_font, fs=fs, mv=margin_v, ml=margin_l, mr=margin_r)
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(header)
         for it in items:
             text = f"{it['speaker_name']}：{it['text']}" if show_name else it["text"]
-            text = text.replace("\n", "\\N")
+            text = wrap_ass_text(text.replace("\n", ""), max_chars)
             f.write(f"Dialogue: 0,{ass_time(it['start'])},{ass_time(it['end'])},Default,,0,0,0,,{text}\n")
 
 
@@ -523,6 +550,9 @@ def process_task(task_id, params, saved_image_paths):
         scene_videos = []
         global_time = 0.0
 
+        speaker_map = {s["id"]: s for s in params.get("speaker_configs", []) if s.get("id")}
+        default_speaker = (params.get("speaker_configs") or [DEFAULT_SPEAKERS[0]])[0] if params.get("speaker_configs") else DEFAULT_SPEAKERS[0]
+        dialogue_voice_logs = []
         update_task(task_id, message="生成图片", progress=35)
         for scene_index, scene in enumerate(storyboard.get("scenes", []), start=1):
             sid = to_int(scene.get("scene_id", scene_index), scene_index)
@@ -558,14 +588,19 @@ def process_task(task_id, params, saved_image_paths):
             update_task(task_id, message="生成配音", progress=55)
             scene_audio_files = []
             for i, d in enumerate(scene.get("dialogue", [])):
-                speaker = next((s for s in storyboard.get("speakers", []) if s["id"] == d.get("speaker_id")), storyboard.get("speakers", [DEFAULT_SPEAKERS[0]])[0])
+                speaker_id = d.get("speaker_id") or d.get("speaker") or "S1"
+                speaker = speaker_map.get(speaker_id) or default_speaker or DEFAULT_SPEAKERS[0]
+                speaker_name = d.get("speaker_name") or speaker.get("name") or "主持人"
+                voice = speaker.get("voice") if params["enable_speaker_voices"] else params["default_voice"]
                 out_audio = task_audio_dir / f"scene_{sid:03d}_{i:03d}.mp3"
                 if params["tts_provider"] == "edge_tts":
-                    generate_edge_tts(d.get("text", ""), speaker.get("voice", "zh-CN-XiaoxiaoNeural"), out_audio)
+                    if not re.match(r"^zh-CN-[A-Za-z]+Neural$", str(voice or "")):
+                        voice = config.EDGE_TTS_VOICE_FALLBACK
+                    generate_edge_tts(d.get("text", ""), voice, out_audio)
                 else:
                     generate_openai_tts(
                         d.get("text", ""),
-                        (speaker.get("voice", "marin") if params["enable_speaker_voices"] else params["default_voice"]),
+                        voice or "marin",
                         d.get("emotion", params["tts_default_emotion"]),
                         speaker.get("style", "自然"),
                         params["tts_default_speed"],
@@ -578,9 +613,10 @@ def process_task(task_id, params, saved_image_paths):
                 subtitle_items.append({
                     "start": global_time,
                     "end": global_time + dur,
-                    "speaker_name": d.get("speaker_name", speaker.get("name", "主持人")),
+                    "speaker_name": speaker_name,
                     "text": d.get("text", "")
                 })
+                dialogue_voice_logs.append({"scene_id": sid, "line_index": i, "speaker_id": speaker_id, "speaker_name": speaker_name, "voice": voice})
                 global_time += dur
                 scene_audio_files.append(out_audio)
                 if dialogue_pause_sec > 0:
@@ -641,6 +677,7 @@ def process_task(task_id, params, saved_image_paths):
             if abs(final_dur - target_dur) / target_dur > 0.2:
                 msg = f"最终视频以配音真实时长为准，当前时长为 {final_dur:.1f} 秒。"
 
+        storyboard["tts_voice_logs"] = dialogue_voice_logs
         update_task(task_id, status="success", message=msg, progress=100, video_url=f"/download/{task_id}.mp4", video_filename=f"{task_id}.mp4", video_path=str(final_video), final_duration=round(final_dur,2), storyboard_json=json.dumps(storyboard, ensure_ascii=False), finished_at=time.strftime("%Y-%m-%d %H:%M:%S"))
     except Exception as e:
         err = str(e)
@@ -740,10 +777,10 @@ def generate_video():
     try:
         speaker_configs = json.loads(speaker_configs_raw)
     except Exception:
-        speaker_configs = default_speakers_for_mode(narration_mode)
+        speaker_configs = default_speakers_for_mode(narration_mode, tts_provider)
 
-    speaker_need = len(default_speakers_for_mode(narration_mode))
-    defaults = default_speakers_for_mode(narration_mode)
+    speaker_need = len(default_speakers_for_mode(narration_mode, tts_provider))
+    defaults = default_speakers_for_mode(narration_mode, tts_provider)
     if len(speaker_configs) < speaker_need:
         speaker_configs = defaults
     else:
@@ -781,7 +818,7 @@ def generate_video():
             "orientation": orientation,
             "duration_mode": duration_mode,
             "narration_mode": narration_mode,
-            "subtitle_mode": form.get("subtitleMode", "both"),
+            "subtitle_mode": form.get("subtitleMode", "bottom"),
             "script_model": script_model,
             "tts_model": tts_model,
             "image_model": image_model,
@@ -810,7 +847,7 @@ def generate_video():
         "scene_count_mode": scene_count_mode,
         "custom_scene_count": custom_scene_count,
         "video_style": form.get("videoStyle", "NotebookLM 音频概览风格"),
-        "subtitle_mode": form.get("subtitleMode", "both"),
+        "subtitle_mode": form.get("subtitleMode", "bottom"),
         "show_speaker_name": form.get("showSpeakerName", "true") == "true",
         "narration_mode": narration_mode,
         "dialogue_style": form.get("dialogueStyle", "NotebookLM 音频概览"),
@@ -829,7 +866,7 @@ def generate_video():
         "tts_default_speed": form.get("ttsDefaultSpeed", "正常"),
         "tts_default_emotion": form.get("ttsDefaultEmotion", "自然"),
         "enable_speaker_voices": form.get("enableSpeakerVoices", "true") == "true",
-        "default_voice": "nova",
+        "default_voice": "zh-CN-XiaoxiaoNeural" if tts_provider == "edge_tts" else "nova",
         "image_provider": form.get("imageProvider", "openai"),
         "image_api_key": image_api_key,
         "image_base_url": image_base_url,
