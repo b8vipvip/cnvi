@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -56,6 +57,37 @@ DEFAULT_SPEAKERS = [
 
 
 
+
+
+def to_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def mask_secret_value(value):
+    if value is None:
+        return "***"
+    text = str(value).strip()
+    if not text:
+        return text
+    if len(text) >= 8:
+        return f"{text[:3]}****{text[-4:]}"
+    return "***"
+
+
+def sanitize_request_params(form):
+    sanitized = {}
+    sensitive_tokens = ("key", "apikey", "token", "secret", "password")
+    for key, value in dict(form).items():
+        key_l = str(key).lower()
+        if any(token in key_l for token in sensitive_tokens):
+            sanitized[key] = mask_secret_value(value)
+        else:
+            sanitized[key] = value
+    return sanitized
+
 def resolve_api_key(primary_key, fallback_key):
     return (primary_key or "").strip() or (fallback_key or "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
 
@@ -101,6 +133,23 @@ def run_cmd(cmd):
         raise RuntimeError(f"命令失败: {' '.join(str(x) for x in cmd)}\n{p.stderr}")
     return p.stdout.strip()
 
+
+
+
+def get_edge_tts_bin():
+    candidates = [
+        Path(sys.executable).resolve().parent / "edge-tts",
+        config.BASE_DIR / "venv/bin/edge-tts",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return str(candidate)
+
+    edge_tts_path = shutil.which("edge-tts")
+    if edge_tts_path:
+        return edge_tts_path
+
+    raise RuntimeError("未找到 edge-tts，请在虚拟环境中执行 pip install edge-tts，并确认 venv/bin 在 PATH 中。")
 
 def ffprobe_duration(file_path):
     out = run_cmd([
@@ -204,7 +253,8 @@ def generate_openai_tts(text, voice, emotion, speaker_style, speech_speed, tts_m
 
 def generate_edge_tts(text, voice, output_path):
     edge_voice = voice if "-" in voice else config.EDGE_TTS_VOICE_FALLBACK
-    run_cmd(["edge-tts", "--voice", edge_voice, "--text", text, "--write-media", output_path])
+    edge_tts_bin = get_edge_tts_bin()
+    run_cmd([edge_tts_bin, "--voice", edge_voice, "--text", text, "--write-media", output_path])
 
 
 def generate_openai_image(prompt, image_model, quality, size, api_key, base_url, output_path):
@@ -365,14 +415,14 @@ def process_task(task_id, params, uploaded_files):
         global_time = 0.0
 
         update_task(task_id, message="生成图片", progress=35)
-        for scene in storyboard.get("scenes", []):
-            sid = scene["scene_id"]
+        for scene_index, scene in enumerate(storyboard.get("scenes", []), start=1):
+            sid = to_int(scene.get("scene_id", scene_index), scene_index)
             raw_scene_img = task_img_dir / f"scene_{sid:03d}_raw.png"
             prepared_scene_img = task_img_dir / f"scene_{sid:03d}.jpg"
 
             use_uploaded = scene.get("visual_type") == "uploaded_image" or params["image_strategy"] == "uploaded_only"
             if use_uploaded and saved_images:
-                src = saved_images[scene.get("image_index", 0) % len(saved_images)]
+                src = saved_images[to_int(scene.get("image_index", 0), 0) % len(saved_images)]
                 shutil.copy(src, raw_scene_img)
             elif not use_uploaded and params["enable_ai_image"] and params["image_api_key"]:
                 try:
@@ -380,13 +430,13 @@ def process_task(task_id, params, uploaded_files):
                     generate_openai_image(scene.get("image_prompt", params["image_style_prompt"]), params["image_model"], params["image_quality"], size, params["image_api_key"], params["image_base_url"], raw_scene_img)
                 except Exception:
                     if saved_images:
-                        src = saved_images[scene.get("image_index", 0) % len(saved_images)]
+                        src = saved_images[to_int(scene.get("image_index", 0), 0) % len(saved_images)]
                         shutil.copy(src, raw_scene_img)
                     else:
                         Image.new("RGB", (1536, 1024), (40, 40, 40)).save(raw_scene_img)
             else:
                 if saved_images:
-                    src = saved_images[scene.get("image_index", 0) % len(saved_images)]
+                    src = saved_images[to_int(scene.get("image_index", 0), 0) % len(saved_images)]
                     shutil.copy(src, raw_scene_img)
                 else:
                     Image.new("RGB", (1536, 1024), (40, 40, 40)).save(raw_scene_img)
@@ -572,7 +622,7 @@ def generate_video():
             "status": "pending",
             "progress": 0,
             "message": "已创建任务",
-            "request_params": json.dumps(dict(form), ensure_ascii=False),
+            "request_params": json.dumps(sanitize_request_params(form), ensure_ascii=False),
             "speaker_configs": speaker_configs_raw,
             "image_count": len(files),
             "orientation": orientation,

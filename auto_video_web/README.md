@@ -85,6 +85,15 @@ WantedBy=multi-user.target
 - 生成视频很慢
 - 任务状态一直 `running`
 - 中文字体乱码
+- `edge-tts: command not found`（systemd/Gunicorn 常见）
+
+### edge-tts 排错（systemd/Gunicorn）
+```bash
+source venv/bin/activate
+pip install edge-tts
+edge-tts --version
+```
+若仍报错，请确认服务使用的 Python 与虚拟环境一致，并确保 `venv/bin` 在 PATH 中。
 
 ## 三类模型单独配置
 - 文案模型：用于生成分镜和多角色对话结构。
