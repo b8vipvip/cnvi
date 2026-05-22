@@ -410,17 +410,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f.write(f"Dialogue: 0,{ass_time(it['start'])},{ass_time(it['end'])},Default,,0,0,0,,{text}\n")
 
 
-def process_task(task_id, params, uploaded_files):
+def process_task(task_id, params, saved_image_paths):
     try:
         update_task(task_id, status="running", message="开始生成", progress=5)
-        task_upload_dir = config.UPLOAD_DIR / task_id
-        task_upload_dir.mkdir(parents=True, exist_ok=True)
-        saved_images = []
-        for file in uploaded_files:
-            name = secure_filename(file.filename)
-            dst = task_upload_dir / name
-            file.save(dst)
-            saved_images.append(dst)
+        saved_images = [Path(p) for p in saved_image_paths]
 
         update_task(task_id, message="保存图片完成", progress=10)
         update_task(task_id, message="AI 改写分镜", progress=20)
@@ -657,6 +650,23 @@ def generate_video():
         speaker_configs = speaker_configs[:speaker_need]
 
     task_id = uuid.uuid4().hex[:12]
+    task_upload_dir = config.UPLOAD_DIR / task_id
+    task_upload_dir.mkdir(parents=True, exist_ok=True)
+    saved_image_paths = []
+    try:
+        for i, f in enumerate(files):
+            name = secure_filename(f.filename or "")
+            ext = Path(name).suffix if name else ""
+            if not name:
+                name = f"upload_{i:03d}{ext or '.jpg'}"
+            dst = task_upload_dir / name
+            if dst.exists():
+                dst = task_upload_dir / f"{dst.stem}_{i:03d}{dst.suffix}"
+            f.save(dst)
+            saved_image_paths.append(str(dst.resolve()))
+    except Exception as e:
+        return jsonify({"success": False, "error": f"保存上传图片失败: {e}"}), 500
+
     try:
         db.create_video_record({
             "task_id": task_id,
@@ -667,7 +677,7 @@ def generate_video():
             "message": "已创建任务",
             "request_params": json.dumps({**sanitize_request_params(form), "dialoguePauseMs": str(dialogue_pause_ms), "scenePauseMs": str(scene_pause_ms)}, ensure_ascii=False),
             "speaker_configs": speaker_configs_raw,
-            "image_count": len(files),
+            "image_count": len(saved_image_paths),
             "orientation": orientation,
             "duration_mode": duration_mode,
             "narration_mode": narration_mode,
@@ -724,14 +734,14 @@ def generate_video():
         "image_model": image_model,
         "image_quality": form.get("imageQuality", config.DEFAULT_IMAGE_QUALITY),
         "speaker_configs": speaker_configs,
-        "image_count": len(files),
+        "image_count": len(saved_image_paths),
         "enable_ai_image": form.get("enableAiImage", "true") == "true",
         "image_style_prompt": form.get("imageStylePrompt", "温暖亲子场景"),
         "dialogue_pause_sec": dialogue_pause_ms / 1000,
         "scene_pause_sec": scene_pause_ms / 1000,
     }
 
-    t = threading.Thread(target=process_task, args=(task_id, params, files), daemon=True)
+    t = threading.Thread(target=process_task, args=(task_id, params, saved_image_paths), daemon=True)
     t.start()
     return jsonify({"success": True, "task_id": task_id})
 
