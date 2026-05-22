@@ -1,10 +1,13 @@
+from pathlib import Path
+
 from dotenv import load_dotenv
 import pymysql
 
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
 import config
 from db import get_connection
-
-load_dotenv()
 
 CREATE_DB_SQL = f"CREATE DATABASE IF NOT EXISTS `{config.MYSQL_DATABASE}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
 
