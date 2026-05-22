@@ -92,6 +92,10 @@ def resolve_api_key(primary_key, fallback_key):
     return (primary_key or "").strip() or (fallback_key or "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
 
 
+def resolve_with_fallback(primary_value, common_value, env_value, default_value=""):
+    return (primary_value or "").strip() or (common_value or "").strip() or (env_value or "").strip() or (default_value or "").strip()
+
+
 def default_speakers_for_mode(mode):
     mapping = {
         "monologue": [{"id":"S1","name":"旁白","role":"短视频口播","voice":"nova","style":"自然、温柔、有亲和力"}],
@@ -316,7 +320,26 @@ def generate_storyboard_with_ai(params, api_key, base_url):
         "imageStrategy": params["image_strategy"],
         "speakerConfigs": speaker_configs,
     }
-    sys = "你是短视频分镜编剧。必须输出严格JSON，不允许markdown。儿童内容合规，禁止夸大功效。"
+    notebooklm_mode = "notebooklm" in (params.get("dialogue_style", "").lower()) or ("音频概览" in params.get("dialogue_style", ""))
+    if notebooklm_mode:
+        sys = """你是短视频分镜编剧，擅长生成 NotebookLM 音频概览风格的多人对话脚本。
+必须输出严格 JSON，不允许 markdown，不要输出任何解释。
+核心要求：
+1) 对话像真实主持人讨论资料，不像广告硬念稿。
+2) 角色之间必须有回应、追问、补充、总结，形成自然承接。
+3) 允许适量使用语气词和过渡词：嗯、是的、没错、对、确实、哇、你看、其实、换句话说、我觉得、这里有个重点、这就很有意思了、对这点很关键。
+4) 语气词不要每句都加，避免重复和油腻。
+5) 每句 text 建议 12-35 个中文字符，适合 TTS 自然朗读。
+6) 每个 scene 的 dialogue 尽量 2-4 句；双人模式尽量 A/B 交替；三人四人模式要有自然插话和补充。
+7) 儿童早教合规：禁止“保证变聪明”“开发智商”“治疗专注力”；可表达“帮助锻炼观察力、提升亲子互动、培养阅读兴趣、更愿意观察和表达”。
+8) 建议结构：A 提出观点/引问题 → B 回应补充 → A 承接解释 → B 举例或转下个卖点 → A/B 收束总结。
+示例风格（仅作语气示例，不可原样照抄）：
+主持人A：你有没有发现，两岁左右的宝宝，其实特别喜欢找东西？
+主持人B：嗯，是的。像这种捉迷藏绘本，就很容易把宝宝的注意力吸引过来。
+主持人A：没错，它不是硬教，而是让孩子一边看一边找。
+主持人B：对，这种互动感，家长在家陪读的时候会轻松很多。"""
+    else:
+        sys = "你是短视频分镜编剧。必须输出严格JSON，不允许markdown。儿童内容合规，禁止夸大功效。"
     usr = "按要求生成 JSON：title,summary,target_duration,speakers,scenes。每个scene有scene_id,caption,visual_type,image_index,image_prompt,dialogue。"
     rsp = client.chat.completions.create(
         model=params["script_model"],
@@ -410,6 +433,8 @@ def process_task(task_id, params, uploaded_files):
         for d in [task_audio_dir, task_img_dir, task_video_dir, task_sub_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
+        dialogue_pause_sec = max(0.0, float(params.get("dialogue_pause_sec", 0.3) or 0.3))
+        scene_pause_sec = max(0.0, float(params.get("scene_pause_sec", 0.5) or 0.5))
         subtitle_items = []
         scene_videos = []
         global_time = 0.0
@@ -469,13 +494,19 @@ def process_task(task_id, params, uploaded_files):
                     "speaker_name": d.get("speaker_name", speaker.get("name", "主持人")),
                     "text": d.get("text", "")
                 })
-                global_time += dur + 0.3
+                global_time += dur
                 scene_audio_files.append(out_audio)
+                if dialogue_pause_sec > 0:
+                    line_pause_audio = task_audio_dir / f"scene_{sid:03d}_{i:03d}_pause.mp3"
+                    run_cmd(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", str(dialogue_pause_sec), "-q:a", "9", line_pause_audio])
+                    scene_audio_files.append(line_pause_audio)
+                    global_time += dialogue_pause_sec
 
-            scene_silence = task_audio_dir / f"silence_{sid:03d}.mp3"
-            run_cmd(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "0.5", "-q:a", "9", scene_silence])
-            scene_audio_files.append(scene_silence)
-            global_time += 0.5
+            if scene_pause_sec > 0:
+                scene_silence = task_audio_dir / f"silence_{sid:03d}.mp3"
+                run_cmd(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", str(scene_pause_sec), "-q:a", "9", scene_silence])
+                scene_audio_files.append(scene_silence)
+                global_time += scene_pause_sec
 
             list_file = task_audio_dir / f"scene_{sid:03d}_concat.txt"
             with open(list_file, "w", encoding="utf-8") as f:
@@ -584,20 +615,32 @@ def generate_video():
             return jsonify({"success": False, "error": f"不支持的图片格式: {f.filename}"}), 400
 
     common_key = form.get("openaiApiKey", "").strip()
+    common_base_url = form.get("openaiBaseUrl", "").strip()
     script_provider = form.get("scriptProvider", "openai")
-    script_api_key = resolve_api_key(form.get("scriptApiKey", "").strip(), common_key)
-    script_base_url = form.get("scriptBaseUrl", "").strip() or config.OPENAI_BASE_URL
+    script_api_key = resolve_with_fallback(form.get("scriptApiKey", ""), common_key, config.OPENAI_API_KEY)
+    script_base_url = resolve_with_fallback(form.get("scriptBaseUrl", ""), common_base_url, config.OPENAI_BASE_URL)
+    script_model = resolve_with_fallback(form.get("scriptModel", ""), "", config.OPENAI_SCRIPT_MODEL, config.DEFAULT_SCRIPT_MODEL)
     tts_provider = form.get("ttsProvider", "openai")
-    tts_api_key = resolve_api_key(form.get("ttsApiKey", "").strip(), common_key)
-    tts_base_url = form.get("ttsBaseUrl", "").strip() or config.OPENAI_BASE_URL
-    image_api_key = resolve_api_key(form.get("imageApiKey", "").strip(), common_key)
-    image_base_url = form.get("imageBaseUrl", "").strip() or config.OPENAI_BASE_URL
+    tts_api_key = resolve_with_fallback(form.get("ttsApiKey", ""), common_key, config.OPENAI_API_KEY)
+    tts_base_url = resolve_with_fallback(form.get("ttsBaseUrl", ""), common_base_url, config.OPENAI_BASE_URL)
+    tts_model = resolve_with_fallback(form.get("ttsModel", ""), "", config.OPENAI_TTS_MODEL, config.DEFAULT_TTS_MODEL)
+    image_api_key = resolve_with_fallback(form.get("imageApiKey", ""), common_key, config.OPENAI_API_KEY)
+    image_base_url = resolve_with_fallback(form.get("imageBaseUrl", ""), common_base_url, config.OPENAI_BASE_URL)
+    image_model = resolve_with_fallback(form.get("imageModel", ""), "", config.OPENAI_IMAGE_MODEL, config.DEFAULT_IMAGE_MODEL)
+    dialogue_pause_ms = max(0, min(2000, int(form.get("dialoguePauseMs", "300") or 300)))
+    scene_pause_ms = max(0, min(3000, int(form.get("scenePauseMs", "500") or 500)))
 
     need_script_openai = script_provider in ("openai", "openai_compatible")
     need_tts_openai = tts_provider == "openai"
     need_image_openai = image_strategy in ("ai_fill", "ai_only") and form.get("enableAiImage", "true") == "true"
-    if (need_script_openai and not script_api_key) or (need_tts_openai and not tts_api_key) or (need_image_openai and not image_api_key):
-        return jsonify({"success": False, "error": "当前配置需要 OpenAI API Key"}), 400
+    if not script_model:
+        return jsonify({"success": False, "error": "未配置文案模型，请在前端填写或在 .env 设置 OPENAI_SCRIPT_MODEL。"}), 400
+    if need_script_openai and not script_api_key:
+        return jsonify({"success": False, "error": "当前文案配置需要 OpenAI API Key"}), 400
+    if need_tts_openai and not tts_api_key:
+        return jsonify({"success": False, "error": "OpenAI TTS 需要 API Key（可前端填写或使用服务器 .env）"}), 400
+    if need_image_openai and not image_api_key:
+        return jsonify({"success": False, "error": "当前图片配置需要 OpenAI API Key"}), 400
 
     narration_mode = form.get("narrationMode", "dialogue2")
     speaker_configs_raw = form.get("speakerConfigs", "[]")
@@ -622,16 +665,16 @@ def generate_video():
             "status": "pending",
             "progress": 0,
             "message": "已创建任务",
-            "request_params": json.dumps(sanitize_request_params(form), ensure_ascii=False),
+            "request_params": json.dumps({**sanitize_request_params(form), "dialoguePauseMs": str(dialogue_pause_ms), "scenePauseMs": str(scene_pause_ms)}, ensure_ascii=False),
             "speaker_configs": speaker_configs_raw,
             "image_count": len(files),
             "orientation": orientation,
             "duration_mode": duration_mode,
             "narration_mode": narration_mode,
             "subtitle_mode": form.get("subtitleMode", "both"),
-            "script_model": form.get("scriptModel", "").strip() or config.OPENAI_SCRIPT_MODEL or "gpt-5.5",
-            "tts_model": form.get("ttsModel", "").strip() or config.OPENAI_TTS_MODEL,
-            "image_model": form.get("imageModel", "").strip() or config.OPENAI_IMAGE_MODEL,
+            "script_model": script_model,
+            "tts_model": tts_model,
+            "image_model": image_model,
         })
     except Exception:
         pass
@@ -664,13 +707,13 @@ def generate_video():
         "script_provider": script_provider,
         "script_api_key": script_api_key,
         "script_base_url": script_base_url,
-        "script_model": form.get("scriptModel", "").strip() or config.OPENAI_SCRIPT_MODEL or "gpt-5.5",
+        "script_model": script_model,
         "script_temperature": float(form.get("scriptTemperature", "0.7") or 0.7),
         "script_max_tokens": int(form.get("scriptMaxTokens", "4000") or 4000),
         "tts_provider": tts_provider,
         "tts_api_key": tts_api_key,
         "tts_base_url": tts_base_url,
-        "tts_model": form.get("ttsModel", "").strip() or config.OPENAI_TTS_MODEL,
+        "tts_model": tts_model,
         "tts_default_speed": form.get("ttsDefaultSpeed", "正常"),
         "tts_default_emotion": form.get("ttsDefaultEmotion", "自然"),
         "enable_speaker_voices": form.get("enableSpeakerVoices", "true") == "true",
@@ -678,17 +721,32 @@ def generate_video():
         "image_provider": form.get("imageProvider", "openai"),
         "image_api_key": image_api_key,
         "image_base_url": image_base_url,
-        "image_model": form.get("imageModel", "").strip() or config.OPENAI_IMAGE_MODEL,
+        "image_model": image_model,
         "image_quality": form.get("imageQuality", config.DEFAULT_IMAGE_QUALITY),
         "speaker_configs": speaker_configs,
         "image_count": len(files),
         "enable_ai_image": form.get("enableAiImage", "true") == "true",
         "image_style_prompt": form.get("imageStylePrompt", "温暖亲子场景"),
+        "dialogue_pause_sec": dialogue_pause_ms / 1000,
+        "scene_pause_sec": scene_pause_ms / 1000,
     }
 
     t = threading.Thread(target=process_task, args=(task_id, params, files), daemon=True)
     t.start()
     return jsonify({"success": True, "task_id": task_id})
+
+
+@app.route("/api/config-defaults", methods=["GET"])
+def config_defaults():
+    return jsonify({
+        "success": True,
+        "script_model": config.OPENAI_SCRIPT_MODEL or config.DEFAULT_SCRIPT_MODEL,
+        "tts_model": config.OPENAI_TTS_MODEL or config.DEFAULT_TTS_MODEL,
+        "image_model": config.OPENAI_IMAGE_MODEL or config.DEFAULT_IMAGE_MODEL,
+        "openai_base_url": config.OPENAI_BASE_URL,
+        "has_openai_api_key": bool((config.OPENAI_API_KEY or "").strip()),
+        "max_upload_mb": config.MAX_UPLOAD_MB,
+    })
 
 
 
